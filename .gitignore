@@ -42,3 +42,7 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+
+# Generated accidentally during model hydration; repo uses npm workspaces
+pnpm-lock.yaml
+pnpm-workspace.yaml
