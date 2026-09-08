@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added completed-selection callbacks with document and viewport coordinates to `TuiAltScreen`.
+
 ## [0.84.4] - 2026-08-28
 
 ### Added

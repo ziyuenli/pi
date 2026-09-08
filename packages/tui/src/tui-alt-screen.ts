@@ -85,6 +85,24 @@ interface SelectionPoint {
 	boundary?: boolean;
 }
 
+export interface TuiTextSelectionPoint {
+	row: number;
+	column: number;
+}
+
+/** A completed application-owned text selection. End positions are exclusive. */
+export interface TuiTextSelection {
+	text: string;
+	document: {
+		start: TuiTextSelectionPoint;
+		end: TuiTextSelectionPoint;
+	};
+	viewport: {
+		start: TuiTextSelectionPoint;
+		end: TuiTextSelectionPoint;
+	};
+}
+
 interface SelectionRange {
 	start: SelectionPoint;
 	end: SelectionPoint;
@@ -158,6 +176,8 @@ export interface TuiAltScreenOptions {
 	onRightClickPaste?: () => void;
 	/** Automatically copy selected text to the clipboard on mouse release (default: true). */
 	copyOnSelect?: boolean;
+	/** Called when the user completes a non-empty application-owned text selection. */
+	onSelection?: (selection: TuiTextSelection) => void;
 	/**
 	 * Copy selected text to the system clipboard. Return `true` on success; the caller flashes
 	 * an error otherwise. When omitted, the selection is copied via an OSC 52 write.
@@ -203,6 +223,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly openUrl?: (url: string) => void;
 	private readonly onRightClickPaste?: () => void;
 	private copyOnSelect: boolean;
+	private readonly onSelection?: (selection: TuiTextSelection) => void;
 	private readonly copySelection?: (text: string) => Promise<boolean>;
 
 	constructor(
@@ -227,6 +248,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.openUrl = options.openUrl;
 		this.onRightClickPaste = options.onRightClickPaste;
 		this.copyOnSelect = options.copyOnSelect ?? true;
+		this.onSelection = options.onSelection;
 		this.copySelection = options.copySelection;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
@@ -245,6 +267,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 	setCopyOnSelect(enabled: boolean): void {
 		this.copyOnSelect = enabled;
+	}
+
+	/** Return the active fullscreen text selection, if any. */
+	getActiveTextSelection(): TuiTextSelection | undefined {
+		return this.getActiveSelection();
 	}
 
 	/** Whether the fullscreen viewport has a non-empty active text selection. */
@@ -1032,6 +1059,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				this.requestRender();
 				return;
 			}
+			const selection = this.getActiveSelection();
+			if (selection && this.onSelection) {
+				try {
+					this.onSelection(selection);
+				} catch {
+					// Selection observers must not interrupt terminal input handling.
+				}
+			}
 			if (this.copyOnSelect) void this.copySelectionToClipboard();
 			this.requestRender();
 			return;
@@ -1108,20 +1143,29 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return { start: Math.max(minColumn, start), end: Math.min(maxColumn, end) };
 	}
 
-	private getActiveSelectionText(): string | undefined {
+	private getActiveSelection(): TuiTextSelection | undefined {
 		const selection = this.getSelectionBounds();
 		if (!selection) return undefined;
 		let sourceLines: readonly string[] = this.previousScreen;
+		let viewportRowOffset = 0;
+		let viewportColumnOffset = 0;
 		if (selection.start.scrollView) {
 			if (!this.currentLayout) return undefined;
 			const box = getScrollViewBox(this.currentLayout, selection.start.scrollView);
 			if (!box?.scrollContentLines) return undefined;
 			sourceLines = box.scrollContentLines;
+			viewportRowOffset = box.rect.y - selection.start.scrollView.scrollTop;
+			viewportColumnOffset = box.rect.x;
 		}
+
 		const lines: string[] = [];
+		let startColumn = 0;
+		let endColumn = 0;
 		for (let row = selection.start.row; row <= selection.end.row; row++) {
 			const line = sourceLines[row] ?? "";
 			const columns = this.getSelectionColumns(line, row, selection);
+			if (row === selection.start.row) startColumn = columns.start;
+			if (row === selection.end.row) endColumn = columns.end;
 			lines.push(
 				stripTerminalSequences(
 					sliceByColumn(line, columns.start, Math.max(0, columns.end - columns.start), true),
@@ -1129,7 +1173,28 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			);
 		}
 		const text = lines.join("\n");
-		return text.length === 0 ? undefined : text;
+		if (text.length === 0) return undefined;
+
+		const documentStart = { row: selection.start.row, column: startColumn };
+		const documentEnd = { row: selection.end.row, column: endColumn };
+		return {
+			text,
+			document: { start: documentStart, end: documentEnd },
+			viewport: {
+				start: {
+					row: documentStart.row + viewportRowOffset,
+					column: documentStart.column + viewportColumnOffset,
+				},
+				end: {
+					row: documentEnd.row + viewportRowOffset,
+					column: documentEnd.column + viewportColumnOffset,
+				},
+			},
+		};
+	}
+
+	private getActiveSelectionText(): string | undefined {
+		return this.getActiveSelection()?.text;
 	}
 
 	private async copySelectionToClipboard(): Promise<boolean> {

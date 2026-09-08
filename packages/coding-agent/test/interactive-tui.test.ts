@@ -68,6 +68,33 @@ describe("createInteractiveTui", () => {
 		altTui.stop();
 	});
 
+	it("forwards completed fullscreen transcript selections", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const onTranscriptSelection = vi.fn();
+		const tui = createInteractiveTui({
+			tuiMode: "fullscreen",
+			showHardwareCursor: false,
+			logDirectory: "/tmp",
+			terminal,
+			fullscreenCopyOnSelect: false,
+			onTranscriptSelection,
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[<0;1;1M");
+			terminal.sendInput("\x1b[<32;4;2M");
+			terminal.sendInput("\x1b[<0;4;2m");
+			await terminal.waitForRender();
+
+			expect(onTranscriptSelection).toHaveBeenCalledOnce();
+			expect(onTranscriptSelection).toHaveBeenCalledWith(expect.objectContaining({ text: "alpha\nbeta" }));
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("replaces the renderer and restores the previous screen for resume-hint exits", async () => {
 		const terminal = new RecordingTerminal(40, 8);
 		const renderer = createInteractiveTui({

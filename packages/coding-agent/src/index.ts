@@ -142,6 +142,8 @@ export type {
 	ToolInfo,
 	ToolRenderResultOptions,
 	ToolResultEvent,
+	TranscriptSelection,
+	TranscriptSelectionHandler,
 	TurnEndEvent,
 	TurnStartEvent,
 	UIPromptEndEvent,

@@ -43,6 +43,7 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	TUI,
+	TuiTextSelection,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
@@ -114,6 +115,12 @@ export interface ExtensionWidgetOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+/** A completed text selection in Pi's fullscreen transcript. */
+export type TranscriptSelection = TuiTextSelection;
+
+/** Listener for completed fullscreen transcript selections. */
+export type TranscriptSelectionHandler = (selection: TranscriptSelection) => void;
+
 /** Working indicator configuration for the interactive streaming loader. */
 export interface WorkingIndicatorOptions {
 	/** Animation frames. Use an empty array to hide the indicator entirely. Custom frames are rendered verbatim. */
@@ -145,6 +152,15 @@ export interface ExtensionUIContext {
 
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
+
+	/** Return the current application-owned fullscreen transcript selection, if any. */
+	getTranscriptSelection(): TranscriptSelection | undefined;
+
+	/**
+	 * Listen for completed application-owned selections in the fullscreen transcript.
+	 * Regular TUI, RPC, JSON, and print modes do not emit selections.
+	 */
+	onTranscriptSelection(handler: TranscriptSelectionHandler): () => void;
 
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `ctx.ui.onTranscriptSelection()` for extensions that annotate fullscreen transcript selections.
+
 ## [0.84.4] - 2026-08-28
 
 ### New Features

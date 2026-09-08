@@ -2581,6 +2581,23 @@ if (confirmed) {
 
 See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.ts) for complete examples.
 
+### Fullscreen Transcript Selection
+
+Extensions can subscribe to completed application-owned text selections in fullscreen mode:
+
+```typescript
+const unsubscribe = ctx.ui.onTranscriptSelection((selection) => {
+  console.log(selection.text);
+  console.log(selection.document); // Unscrolled transcript rows/columns
+  console.log(selection.viewport); // Current terminal rows/columns for overlay anchoring
+});
+
+// Call during session shutdown or when the listener is no longer needed.
+unsubscribe();
+```
+
+Positions use zero-based rows and columns; each `end` position is exclusive. Regular TUI, RPC, JSON, and print modes do not emit selections. Use the viewport range with `ctx.ui.custom(..., { overlay: true, overlayOptions })` to place an editor near the selected text. See [examples/extensions/inline-comments.ts](../examples/extensions/inline-comments.ts) for a complete staged-comment workflow.
+
 ### Widgets, Status, and Footer
 
 ```typescript

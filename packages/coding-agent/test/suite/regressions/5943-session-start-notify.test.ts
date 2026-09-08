@@ -16,6 +16,8 @@ function createUiContext(
 		input: async () => undefined,
 		notify: onNotify,
 		onTerminalInput: () => () => {},
+		getTranscriptSelection: () => undefined,
+		onTranscriptSelection: () => () => {},
 		setStatus: () => {},
 		setWorkingMessage: () => {},
 		setWorkingVisible: () => {},

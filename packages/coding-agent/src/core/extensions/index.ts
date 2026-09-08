@@ -163,6 +163,8 @@ export type {
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,
+	TranscriptSelection,
+	TranscriptSelectionHandler,
 	TreePreparation,
 	TurnEndEvent,
 	TurnStartEvent,

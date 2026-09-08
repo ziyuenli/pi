@@ -22,6 +22,7 @@ import type {
 	SlashCommand,
 	Terminal,
 	TuiMainScreenRenderState,
+	TuiTextSelection,
 } from "@earendil-works/pi-tui";
 import * as TuiLayouts from "@earendil-works/pi-tui";
 import {
@@ -78,6 +79,7 @@ import type {
 	ExtensionWidgetOptions,
 	MarkdownTransformer,
 	ProjectTrustContext,
+	TranscriptSelectionHandler,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
@@ -363,6 +365,7 @@ interface InteractiveTuiOptions {
 	terminal?: Terminal;
 	onRightClickPaste?: () => void;
 	fullscreenCopyOnSelect?: boolean;
+	onTranscriptSelection?: (selection: TuiTextSelection) => void;
 }
 
 /** Composition root for selecting the interactive terminal renderer. */
@@ -376,6 +379,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,
+			onSelection: options.onTranscriptSelection,
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);
@@ -524,6 +528,7 @@ export class InteractiveMode {
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
 	}>();
+	private transcriptSelectionHandlers = new Set<TranscriptSelectionHandler>();
 
 	// Extension widgets (components rendered above/below the editor)
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
@@ -584,6 +589,7 @@ export class InteractiveMode {
 			logDirectory: getAgentDir(),
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+			onTranscriptSelection: (selection) => this.emitTranscriptSelection(selection),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -869,6 +875,7 @@ export class InteractiveMode {
 			terminal,
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+			onTranscriptSelection: (selection) => this.emitTranscriptSelection(selection),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -2272,6 +2279,7 @@ export class InteractiveMode {
 		}
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
+		this.transcriptSelectionHandlers.clear();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
@@ -2423,6 +2431,21 @@ export class InteractiveMode {
 		this.extensionTerminalInputSubscriptions.clear();
 	}
 
+	private emitTranscriptSelection(selection: TuiTextSelection): void {
+		for (const handler of this.transcriptSelectionHandlers) {
+			try {
+				handler(selection);
+			} catch {
+				// Selection listeners must not interrupt terminal input handling.
+			}
+		}
+	}
+
+	private addTranscriptSelectionListener(handler: TranscriptSelectionHandler): () => void {
+		this.transcriptSelectionHandlers.add(handler);
+		return () => this.transcriptSelectionHandlers.delete(handler);
+	}
+
 	/**
 	 * Create the ExtensionUIContext for extensions.
 	 */
@@ -2448,6 +2471,9 @@ export class InteractiveMode {
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
+			getTranscriptSelection: () =>
+				this.renderer instanceof TuiAltScreen ? this.renderer.getActiveTextSelection() : undefined,
+			onTranscriptSelection: (handler) => this.addTranscriptSelectionListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
@@ -6561,6 +6587,7 @@ export class InteractiveMode {
 		this.clearStatusIndicator();
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
+		this.transcriptSelectionHandlers.clear();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {

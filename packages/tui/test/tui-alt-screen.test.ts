@@ -972,6 +972,37 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("reports completed selections with document and viewport coordinates", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const selections: Array<{
+			text: string;
+			document: { start: { row: number; column: number }; end: { row: number; column: number } };
+			viewport: { start: { row: number; column: number }; end: { row: number; column: number } };
+		}> = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push(selection),
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [
+			{
+				text: "alpha\nbeta",
+				document: { start: { row: 0, column: 0 }, end: { row: 1, column: 4 } },
+				viewport: { start: { row: 0, column: 0 }, end: { row: 1, column: 4 } },
+			},
+		]);
+
+		tui.stop();
+	});
+
 	it("uses an injected copySelection handler instead of OSC 52 and reports success", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const copied: string[] = [];
