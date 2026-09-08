@@ -34,6 +34,36 @@ fi
 log() { printf '\033[1;34m[update-pi]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[update-pi]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Restore the locked model catalog data for a given version from the published
+# npm package (data/ is gitignored upstream, so a fresh clone has none).
+restore_locked_model_data() {
+	local repo="$1"
+	local version="$2"
+	local pkg="@earendil-works/pi-ai"
+	local tmp
+	tmp="$(mktemp -d)"
+	local out
+	out="$(cd "$tmp" && npm pack "${pkg}@${version}" --silent 2>/dev/null | tail -1)"
+	if [[ -z "$out" || ! -f "$tmp/$out" ]]; then
+		rm -rf "$tmp"
+		return 1
+	fi
+	# Extract dist/providers/data from the tarball.
+	tar -xzf "$tmp/$out" -C "$tmp" 2>/dev/null
+	local src="$tmp/package/dist/providers/data"
+	local dst="$repo/packages/ai/src/providers/data"
+	if [[ ! -d "$src" ]]; then
+		rm -rf "$tmp"
+		return 1
+	fi
+	rm -rf "$dst"
+	mkdir -p "$dst"
+	cp -R "$src"/. "$dst"/
+	rm -rf "$tmp"
+	log "Restored "$(ls "$dst" | wc -l | tr -d ' ')" model data file(s) for $version."
+	return 0
+}
+
 ########################################
 # 1. Determine the current upstream tag this fork is based on.
 ########################################
@@ -141,13 +171,20 @@ log "Installing dependencies (npm ci --ignore-scripts)..."
 npm --prefix "$REPO" ci --ignore-scripts >/dev/null 2>&1 \
 	|| die "npm ci failed."
 
-log "Regenerating model catalog (matches official source)..."
-npm --prefix "$REPO" run generate:models >/dev/null 2>&1 \
-	|| log "(model regeneration failed; continuing — data already shipped with tag)"
-
 # The version is already set to $TARGET by checking out the official baseline.
 NEW_VERSION="$(node -e "console.log(require('$REPO/packages/coding-agent/package.json').version)")"
 log "Base version after checkout: $NEW_VERSION"
+
+# Model data (packages/ai/src/providers/data/*.json) is a build artifact and is
+# NOT tracked by git (upstream gitignores it), so on a fresh clone the data
+# directory is empty. Instead of pulling the *latest* model source (which drifts
+# from the release we are pinning), restore the locked snapshot shipped in the
+# published npm package for this exact version. That keeps the fork data == the
+# official release data for $TARGET.
+log "Restoring locked model data for $NEW_VERSION from npm ..."
+if ! restore_locked_model_data "$REPO" "$NEW_VERSION"; then
+	die "Could not restore model data for $NEW_VERSION. Check network access to npm."
+fi
 
 git -C "$REPO" add -A
 git -C "$REPO" commit -m "feat: transcript-selection on $TARGET" \
