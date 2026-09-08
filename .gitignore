@@ -46,3 +46,4 @@ collect.sh
 # Generated accidentally during model hydration; repo uses npm workspaces
 pnpm-lock.yaml
 pnpm-workspace.yaml
+packages/agent/docs/extensions/pi-server-artifact/index.md
