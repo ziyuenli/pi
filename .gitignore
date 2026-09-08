@@ -47,3 +47,6 @@ collect.sh
 pnpm-lock.yaml
 pnpm-workspace.yaml
 packages/agent/docs/extensions/pi-server-artifact/index.md
+
+# Generated transcript-selection feature patch (managed by update-pi.sh)
+transcript-selection.patch
