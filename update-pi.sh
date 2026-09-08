@@ -34,35 +34,7 @@ fi
 log() { printf '\033[1;34m[update-pi]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[update-pi]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Restore the locked model catalog data for a given version from the published
-# npm package (data/ is gitignored upstream, so a fresh clone has none).
-restore_locked_model_data() {
-	local repo="$1"
-	local version="$2"
-	local pkg="@earendil-works/pi-ai"
-	local tmp
-	tmp="$(mktemp -d)"
-	local out
-	out="$(cd "$tmp" && npm pack "${pkg}@${version}" --silent 2>/dev/null | tail -1)"
-	if [[ -z "$out" || ! -f "$tmp/$out" ]]; then
-		rm -rf "$tmp"
-		return 1
-	fi
-	# Extract dist/providers/data from the tarball.
-	tar -xzf "$tmp/$out" -C "$tmp" 2>/dev/null
-	local src="$tmp/package/dist/providers/data"
-	local dst="$repo/packages/ai/src/providers/data"
-	if [[ ! -d "$src" ]]; then
-		rm -rf "$tmp"
-		return 1
-	fi
-	rm -rf "$dst"
-	mkdir -p "$dst"
-	cp -R "$src"/. "$dst"/
-	rm -rf "$tmp"
-	log "Restored "$(ls "$dst" | wc -l | tr -d ' ')" model data file(s) for $version."
-	return 0
-}
+
 
 ########################################
 # 1. Determine the current upstream tag this fork is based on.
@@ -177,13 +149,16 @@ log "Base version after checkout: $NEW_VERSION"
 
 # Model data (packages/ai/src/providers/data/*.json) is a build artifact and is
 # NOT tracked by git (upstream gitignores it), so on a fresh clone the data
-# directory is empty. Instead of pulling the *latest* model source (which drifts
-# from the release we are pinning), restore the locked snapshot shipped in the
-# published npm package for this exact version. That keeps the fork data == the
-# official release data for $TARGET.
-log "Restoring locked model data for $NEW_VERSION from npm ..."
-if ! restore_locked_model_data "$REPO" "$NEW_VERSION"; then
-	die "Could not restore model data for $NEW_VERSION. Check network access to npm."
+# directory is empty and must be regenerated. generate:models regenerates BOTH
+# the JSON data and the .models.ts type shards from the same model sources, so
+# the runtime data and the compile-time types stay in sync (avoids the
+# data-vs-type drift that otherwise makes type checks fail on a fresh clone).
+# It needs network access.
+log "Generating model catalog (data + type shards) for $NEW_VERSION ..."
+if ! npm --prefix "$REPO" run generate:models >/dev/null 2>&1; then
+	log "Model gen (data + types) failed — falling back to data-only hydration."
+	npm --prefix "$REPO" run hydrate:model-data >/dev/null 2>&1 \
+		|| die "Model hydration failed. Check network access to the model sources."
 fi
 
 git -C "$REPO" add -A
