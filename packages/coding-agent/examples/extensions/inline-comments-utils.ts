@@ -6,13 +6,12 @@ function normalizeRenderedText(text: string): string {
 
 export function findAssistantEntryId(ctx: ExtensionContext, quote: string): string | undefined {
 	const normalizedQuote = normalizeRenderedText(quote);
-	let latestCompletedAssistantId: string | undefined;
+	let latestAssistantId: string | undefined;
 	const branch = ctx.sessionManager.getBranch();
 	for (let index = branch.length - 1; index >= 0; index--) {
 		const entry = branch[index];
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-		if (entry.message.stopReason !== "stop") continue;
-		latestCompletedAssistantId ??= entry.id;
+		latestAssistantId ??= entry.id;
 		const text = entry.message.content
 			.filter((part): part is { type: "text"; text: string } => part.type === "text")
 			.map((part) => part.text)
@@ -22,6 +21,6 @@ export function findAssistantEntryId(ctx: ExtensionContext, quote: string): stri
 
 	// Fullscreen selections contain rendered Markdown rather than the source
 	// message. If formatting changed the text, the selected quote remains the
-	// durable anchor and the latest completed assistant entry supplies context.
-	return latestCompletedAssistantId;
+	// durable anchor and the latest assistant entry supplies context.
+	return latestAssistantId;
 }
