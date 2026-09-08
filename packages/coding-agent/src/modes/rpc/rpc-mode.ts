@@ -174,6 +174,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			return () => {};
 		},
 
+		setTranscriptAnnotations(): void {
+			// Transcript annotations belong to the interactive fullscreen renderer.
+		},
+
 		setStatus(key: string, text: string | undefined): void {
 			// Fire and forget - no response needed
 			output({

@@ -146,6 +146,7 @@ export {
 	type TuiAltScreenOptions,
 	type TuiTextSelection,
 	type TuiTextSelectionPoint,
+	type TuiTranscriptAnnotation,
 } from "./tui-alt-screen.ts";
 export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
 // Utilities

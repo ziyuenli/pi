@@ -44,6 +44,7 @@ import type {
 	OverlayOptions,
 	TUI,
 	TuiTextSelection,
+	TuiTranscriptAnnotation,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
@@ -121,6 +122,9 @@ export type TranscriptSelection = TuiTextSelection;
 /** Listener for completed fullscreen transcript selections. */
 export type TranscriptSelectionHandler = (selection: TranscriptSelection) => void;
 
+/** A clickable marker attached to a fullscreen transcript selection. */
+export type TranscriptAnnotation = TuiTranscriptAnnotation;
+
 /** Working indicator configuration for the interactive streaming loader. */
 export interface WorkingIndicatorOptions {
 	/** Animation frames. Use an empty array to hide the indicator entirely. Custom frames are rendered verbatim. */
@@ -161,6 +165,9 @@ export interface ExtensionUIContext {
 	 * Regular TUI, RPC, JSON, and print modes do not emit selections.
 	 */
 	onTranscriptSelection(handler: TranscriptSelectionHandler): () => void;
+
+	/** Replace this extension's clickable fullscreen transcript annotations. */
+	setTranscriptAnnotations(key: string, annotations: readonly TranscriptAnnotation[] | undefined): void;
 
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
@@ -1464,7 +1471,6 @@ export interface ExtensionAPI {
 	 * // Register a new provider with custom models
 	 * pi.registerProvider("my-proxy", {
 	 *   baseUrl: "https://proxy.example.com",
-	 *   apiKey: "$PROXY_API_KEY",
 	 *   api: "anthropic-messages",
 	 *   models: [
 	 *     {

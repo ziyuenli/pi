@@ -18,6 +18,7 @@ function createUiContext(
 		onTerminalInput: () => () => {},
 		getTranscriptSelection: () => undefined,
 		onTranscriptSelection: () => () => {},
+		setTranscriptAnnotations: () => {},
 		setStatus: () => {},
 		setWorkingMessage: () => {},
 		setWorkingVisible: () => {},

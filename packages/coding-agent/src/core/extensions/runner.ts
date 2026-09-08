@@ -241,6 +241,7 @@ const noOpUIContext: ExtensionUIContext = {
 	onTerminalInput: () => () => {},
 	getTranscriptSelection: () => undefined,
 	onTranscriptSelection: () => () => {},
+	setTranscriptAnnotations: () => {},
 	setStatus: () => {},
 	setWorkingMessage: () => {},
 	setWorkingVisible: () => {},

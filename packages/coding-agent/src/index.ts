@@ -142,6 +142,7 @@ export type {
 	ToolInfo,
 	ToolRenderResultOptions,
 	ToolResultEvent,
+	TranscriptAnnotation,
 	TranscriptSelection,
 	TranscriptSelectionHandler,
 	TurnEndEvent,

@@ -1270,6 +1270,91 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("renders clickable transcript annotations and highlights open ranges", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		let opened = 0;
+		let openedViewport: { start: { row: number; column: number }; end: { row: number; column: number } } | undefined;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.setTranscriptAnnotations([
+			{
+				id: "comment-1",
+				marker: "🫧1",
+				selection: {
+					text: "beta\ngamma",
+					document: { start: { row: 1, column: 0 }, end: { row: 2, column: 5 } },
+					viewport: { start: { row: 1, column: 0 }, end: { row: 2, column: 5 } },
+				},
+				open: true,
+				onOpen: (selection) => {
+					opened++;
+					openedViewport = selection.viewport;
+				},
+			},
+		]);
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.match(viewport[1] ?? "", /beta .*🫧1/);
+		assert.ok(!stripTerminalSequences(viewport[2] ?? "").includes("🫧1"));
+		assert.ok(stripTerminalSequences(viewport[2] ?? "").includes("gamma"));
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m")));
+
+		terminal.sendInput("\x1b[<0;7;2M");
+		terminal.sendInput("\x1b[<0;7;2m");
+		await terminal.waitForRender();
+		assert.strictEqual(opened, 1);
+		assert.deepStrictEqual(openedViewport, {
+			start: { row: 1, column: 0 },
+			end: { row: 2, column: 5 },
+		});
+
+		tui.stop();
+	});
+
+	it("repositions annotation markers and refreshes callback viewport coordinates after scrolling", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		let openedViewport: { start: { row: number; column: number }; end: { row: number; column: number } } | undefined;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.addChild(new Text(Array.from({ length: 8 }, (_, index) => `line ${index}`).join("\n"), 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.setTranscriptAnnotations([
+			{
+				id: "comment-1",
+				marker: "🫧1",
+				selection: {
+					text: "line 5",
+					document: { start: { row: 5, column: 0 }, end: { row: 5, column: 6 } },
+					viewport: { start: { row: 1, column: 0 }, end: { row: 1, column: 6 } },
+				},
+				onOpen: (selection) => {
+					openedViewport = selection.viewport;
+				},
+			},
+		]);
+		await terminal.waitForRender();
+		assert.match(terminal.getViewport()[1] ?? "", /line 5 .*🫧1/);
+
+		tui.scrollBy(-2);
+		await terminal.waitForRender();
+		assert.match(terminal.getViewport()[3] ?? "", /line 5 .*🫧1/);
+
+		terminal.sendInput("\x1b[<0;8;4M");
+		terminal.sendInput("\x1b[<0;8;4m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(openedViewport, {
+			start: { row: 3, column: 0 },
+			end: { row: 3, column: 6 },
+		});
+
+		tui.stop();
+	});
+
 	it("uses an injected copySelection handler instead of OSC 52 and reports success", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const copied: string[] = [];

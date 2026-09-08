@@ -22,6 +22,7 @@ import type {
 	SlashCommand,
 	TuiMainScreenRenderState,
 	TuiTextSelection,
+	TuiTranscriptAnnotation,
 } from "@earendil-works/pi-tui";
 import * as TuiLayouts from "@earendil-works/pi-tui";
 import {
@@ -480,6 +481,7 @@ export class InteractiveMode {
 		unsubscribe: () => void;
 	}>();
 	private transcriptSelectionHandlers = new Set<TranscriptSelectionHandler>();
+	private extensionTranscriptAnnotations = new Map<string, readonly TuiTranscriptAnnotation[]>();
 
 	// Extension widgets (components rendered above/below the editor)
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
@@ -837,6 +839,7 @@ export class InteractiveMode {
 		this.renderer = nextUi;
 		this.options.tuiMode = mode;
 		this.mountInteractiveTui(nextUi, components);
+		this.syncTranscriptAnnotations();
 		nextUi.invalidate();
 		nextUi.setFocus(focus);
 		if (!startRenderer) return true;
@@ -2257,6 +2260,8 @@ export class InteractiveMode {
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
 		this.transcriptSelectionHandlers.clear();
+		this.extensionTranscriptAnnotations.clear();
+		this.syncTranscriptAnnotations();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
@@ -2423,6 +2428,23 @@ export class InteractiveMode {
 		return () => this.transcriptSelectionHandlers.delete(handler);
 	}
 
+	private setExtensionTranscriptAnnotations(
+		key: string,
+		annotations: readonly TuiTranscriptAnnotation[] | undefined,
+	): void {
+		if (annotations && annotations.length > 0) this.extensionTranscriptAnnotations.set(key, annotations);
+		else this.extensionTranscriptAnnotations.delete(key);
+		this.syncTranscriptAnnotations();
+	}
+
+	private syncTranscriptAnnotations(): void {
+		if (!(this.renderer instanceof TuiAltScreen)) return;
+		const annotations = [...this.extensionTranscriptAnnotations.entries()].flatMap(([key, items]) =>
+			items.map((annotation) => ({ ...annotation, id: `${key}:${annotation.id}` })),
+		);
+		this.renderer.setTranscriptAnnotations(annotations);
+	}
+
 	/**
 	 * Create the ExtensionUIContext for extensions.
 	 */
@@ -2451,6 +2473,7 @@ export class InteractiveMode {
 			getTranscriptSelection: () =>
 				this.renderer instanceof TuiAltScreen ? this.renderer.getActiveTextSelection() : undefined,
 			onTranscriptSelection: (handler) => this.addTranscriptSelectionListener(handler),
+			setTranscriptAnnotations: (key, annotations) => this.setExtensionTranscriptAnnotations(key, annotations),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
@@ -2711,8 +2734,8 @@ export class InteractiveMode {
 				newEditor.setAutocompleteProvider(this.autocompleteProvider);
 			}
 
-			// If extending CustomEditor, copy app-level handlers
-			// Use duck typing since instanceof fails across jiti module boundaries
+			// If extending CustomEditor, copy app-level handlers.
+			// SAFETY: Duck typing is required because instanceof fails across jiti module boundaries.
 			const customEditor = newEditor as unknown as Record<string, unknown>;
 			if ("actionHandlers" in customEditor && customEditor.actionHandlers instanceof Map) {
 				if (!customEditor.onEscape) {
@@ -4042,13 +4065,19 @@ export class InteractiveMode {
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
-		} catch {}
+		} catch {
+			// Continue best-effort terminal recovery after a crash.
+		}
 		try {
 			killTrackedDetachedChildren();
-		} catch {}
+		} catch {
+			// Continue best-effort terminal recovery after a crash.
+		}
 		try {
 			this.ui.stop();
-		} catch {}
+		} catch {
+			// There is no safer recovery path if terminal shutdown itself fails.
+		}
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
 		console.error(error);
 		process.exit(1);
@@ -6603,6 +6632,8 @@ export class InteractiveMode {
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
 		this.transcriptSelectionHandlers.clear();
+		this.extensionTranscriptAnnotations.clear();
+		this.syncTranscriptAnnotations();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {

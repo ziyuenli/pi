@@ -114,6 +114,23 @@ export interface TuiTextSelection {
 	};
 }
 
+/** A clickable marker attached to a fullscreen transcript selection. */
+export interface TuiTranscriptAnnotation {
+	id: string;
+	marker: string;
+	selection: TuiTextSelection;
+	open?: boolean;
+	/** Called with the selection's current viewport coordinates after scrolling. */
+	onOpen: (selection: TuiTextSelection) => void;
+}
+
+interface TranscriptAnnotationRect {
+	id: string;
+	row: number;
+	column: number;
+	width: number;
+}
+
 interface SelectionRange {
 	start: SelectionPoint;
 	end: SelectionPoint;
@@ -204,6 +221,8 @@ export interface TuiAltScreenOptions {
 	copyOnSelect?: boolean;
 	/** Called when the user completes a non-empty application-owned text selection. */
 	onSelection?: (selection: TuiTextSelection) => void;
+	/** Style a transcript annotation marker without changing its visible width. */
+	transcriptAnnotationStyle?: (marker: string, open: boolean) => string;
 	/**
 	 * Copy selected text to the system clipboard. Return `true` on success; the caller flashes
 	 * an error otherwise. When omitted, the selection is copied via an OSC 52 write.
@@ -264,6 +283,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly onRightClickPaste?: () => void;
 	private copyOnSelect: boolean;
 	private readonly onSelection?: (selection: TuiTextSelection) => void;
+	private readonly transcriptAnnotationStyle: (marker: string, open: boolean) => string;
+	private transcriptAnnotations: readonly TuiTranscriptAnnotation[] = [];
+	private transcriptAnnotationRects: TranscriptAnnotationRect[] = [];
+	private pressedTranscriptAnnotationId?: string;
 	private readonly copySelection?: (text: string) => Promise<boolean>;
 
 	constructor(
@@ -292,6 +315,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.onRightClickPaste = options.onRightClickPaste;
 		this.copyOnSelect = options.copyOnSelect ?? true;
 		this.onSelection = options.onSelection;
+		this.transcriptAnnotationStyle = options.transcriptAnnotationStyle ?? ((marker) => marker);
 		this.copySelection = options.copySelection;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
@@ -315,6 +339,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	/** Return the active fullscreen text selection, if any. */
 	getActiveTextSelection(): TuiTextSelection | undefined {
 		return this.getActiveSelection();
+	}
+
+	/** Replace the clickable annotations composited over the fullscreen transcript. */
+	setTranscriptAnnotations(annotations: readonly TuiTranscriptAnnotation[]): void {
+		this.transcriptAnnotations = [...annotations];
+		this.requestRender();
 	}
 
 	/** Whether the fullscreen viewport has a non-empty active text selection. */
@@ -942,6 +972,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const scrollbarHandled = this.handleScrollbarMouseEvent(raw);
 			if (!this.scrollbarDrag) this.updateScrollbarHover(raw.x, raw.y);
 			if (scrollbarHandled) return;
+			if (this.handleTranscriptAnnotationMouseEvent(raw)) return;
 		} else {
 			this.stopScrollbarHover();
 		}
@@ -961,6 +992,54 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		if (this.handleRightClickPaste(raw)) return;
 		this.handleSelectionMouseEvent(raw);
+	}
+
+	private getCurrentTranscriptAnnotationSelection(annotation: TuiTranscriptAnnotation): TuiTextSelection {
+		const layout = this.currentLayout;
+		if (!layout) return annotation.selection;
+		const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
+		const box = getScrollViewBox(layout, scrollView);
+		if (!box) return annotation.selection;
+		const toViewportPoint = (point: TuiTextSelectionPoint): TuiTextSelectionPoint => ({
+			row: box.rect.y + point.row - scrollView.scrollTop,
+			column: box.rect.x + point.column,
+		});
+		return {
+			...annotation.selection,
+			viewport: {
+				start: toViewportPoint(annotation.selection.document.start),
+				end: toViewportPoint(annotation.selection.document.end),
+			},
+		};
+	}
+
+	private handleTranscriptAnnotationMouseEvent(raw: SgrMouseEvent): boolean {
+		if ((raw.button & 64) !== 0) return false;
+		const target = this.transcriptAnnotationRects.find(
+			(rect) => raw.y === rect.row && raw.x >= rect.column && raw.x < rect.column + rect.width,
+		);
+
+		if (raw.release) {
+			const pressedId = this.pressedTranscriptAnnotationId;
+			this.pressedTranscriptAnnotationId = undefined;
+			if (!pressedId) return false;
+			if (target?.id === pressedId) {
+				const annotation = this.transcriptAnnotations.find((item) => item.id === pressedId);
+				try {
+					if (annotation) annotation.onOpen(this.getCurrentTranscriptAnnotationSelection(annotation));
+				} catch {
+					// Annotation callbacks must not interrupt terminal input handling.
+				}
+			}
+			this.requestRender();
+			return true;
+		}
+
+		if ((raw.button & 32) !== 0) return this.pressedTranscriptAnnotationId !== undefined;
+		if ((raw.button & 3) !== 0 || !target) return false;
+		this.pressedTranscriptAnnotationId = target.id;
+		this.requestRender();
+		return true;
 	}
 
 	private parseWheelEvent(data: string): WheelEvent | undefined {
@@ -1626,9 +1705,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		return `${result}\x1b[27m`;
 	}
 
-	private applySelection(screen: string[], layout = this.currentLayout): string[] {
-		const selection = this.getSelectionBounds();
-		if (!selection) return screen;
+	private applySelectionRange(screen: string[], selection: SelectionRange, layout = this.currentLayout): string[] {
 		let screenSelection = selection;
 		let minRow = 0;
 		let maxRow = screen.length - 1;
@@ -1673,6 +1750,147 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			const after = sliceByColumn(line, columns.end, Math.max(0, lineWidth - columns.end), true);
 			return `${before}${this.applySelectionHighlight(selected)}${after}`;
 		});
+	}
+
+	private applySelection(screen: string[], layout = this.currentLayout): string[] {
+		const selection = this.getSelectionBounds();
+		return selection ? this.applySelectionRange(screen, selection, layout) : screen;
+	}
+
+	private applyTranscriptAnnotationHighlights(screen: string[], layout: LayoutFrame): string[] {
+		const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
+		let result = screen;
+		for (const annotation of this.transcriptAnnotations) {
+			if (!annotation.open) continue;
+			result = this.applySelectionRange(
+				result,
+				{
+					start: {
+						row: annotation.selection.document.start.row,
+						col: annotation.selection.document.start.column,
+						scrollView,
+					},
+					end: {
+						row: annotation.selection.document.end.row,
+						col: annotation.selection.document.end.column,
+						scrollView,
+						boundary: true,
+					},
+				},
+				layout,
+			);
+		}
+		return result;
+	}
+
+	private compositeTranscriptAnnotations(screen: string[], layout: LayoutFrame, width: number): string[] {
+		this.transcriptAnnotationRects = [];
+		if (this.transcriptAnnotations.length === 0) return screen;
+		const scrollView = layout.primaryScrollView ?? this.implicitScrollView;
+		const box = getScrollViewBox(layout, scrollView);
+		if (!box) return screen;
+		const clip = box.clip;
+		const rightEdge = getScrollbarGeometry(box)?.column ?? clip.x + clip.width;
+		const occupiedByRow = new Map<number, Array<{ start: number; end: number }>>();
+		const result = [...screen];
+
+		for (const annotation of this.transcriptAnnotations) {
+			const { document } = annotation.selection;
+			const startBeforeEnd =
+				document.start.row < document.end.row ||
+				(document.start.row === document.end.row && document.start.column <= document.end.column);
+			const start = startBeforeEnd ? document.start : document.end;
+			const end = startBeforeEnd ? document.end : document.start;
+			const viewportStartRow = box.rect.y + start.row - scrollView.scrollTop;
+			const viewportEndRow = box.rect.y + end.row - scrollView.scrollTop;
+			const topRow = Math.max(clip.y, viewportStartRow, 0);
+			const bottomRow = Math.min(clip.y + clip.height - 1, viewportEndRow, result.length - 1);
+			if (topRow > bottomRow) continue;
+			const marker = truncateToWidth(annotation.marker, Math.max(0, rightEdge - clip.x), "");
+			const markerWidth = visibleWidth(marker);
+			if (markerWidth === 0) continue;
+
+			// Build the visible bounding box of the selected range. Markers are placed at its
+			// upper-right corner, rather than at the end row, so multiline selections do not
+			// make the marker look like transcript content.
+			const selectionRanges = new Map<number, { start: number; end: number }>();
+			let selectionRight = clip.x;
+			let selectionLeft = rightEdge;
+			for (let row = topRow; row <= bottomRow; row++) {
+				const documentRow = row - box.rect.y + scrollView.scrollTop;
+				// Layout frames pad every line to the terminal width. Trim that padding
+				// before finding the visual right edge, otherwise the marker is pushed
+				// onto the line above the selection.
+				const lineContent = stripTerminalSequences(screen[row] ?? "").trimEnd();
+				const lineWidth = Math.min(rightEdge, Math.max(clip.x, visibleWidth(lineContent)));
+				const rowStart = documentRow === start.row ? box.rect.x + Math.max(0, start.column) : clip.x;
+				const rowEnd = documentRow === end.row ? box.rect.x + Math.max(0, end.column) : lineWidth;
+				const range = {
+					start: Math.max(clip.x, Math.min(rightEdge, rowStart)),
+					end: Math.max(clip.x, Math.min(rightEdge, Math.max(rowStart, rowEnd))),
+				};
+				selectionRanges.set(row, range);
+				selectionLeft = Math.min(selectionLeft, range.start);
+				selectionRight = Math.max(selectionRight, range.end);
+			}
+
+			const isBlank = (row: number, column: number): boolean =>
+				stripTerminalSequences(sliceByColumn(result[row] ?? "", column, markerWidth, true)).trim() === "";
+			const fits = (row: number, column: number): boolean => {
+				if (
+					row < clip.y ||
+					row >= clip.y + clip.height ||
+					row < 0 ||
+					row >= result.length ||
+					column < clip.x ||
+					column + markerWidth > rightEdge
+				) {
+					return false;
+				}
+				const selectedRange = selectionRanges.get(row);
+				if (selectedRange && column < selectedRange.end && column + markerWidth > selectedRange.start) return false;
+				const occupied = occupiedByRow.get(row) ?? [];
+				if (occupied.some((range) => column < range.end && column + markerWidth > range.start)) return false;
+				// Do not cover transcript characters. If a full line leaves no safe cell, the
+				// top bubble bar remains the non-obscuring fallback for that annotation.
+				return isBlank(row, column);
+			};
+
+			const rightOfSelection = selectionRight + 1;
+			const leftOfSelection = selectionLeft - markerWidth - 1;
+			const rowCandidates = [topRow, topRow - 1];
+			const columnCandidates = [rightOfSelection, rightEdge - markerWidth, leftOfSelection];
+			let placement: { row: number; column: number } | undefined;
+			for (const row of rowCandidates) {
+				for (const column of columnCandidates) {
+					if (fits(row, column)) {
+						placement = { row, column };
+						break;
+					}
+				}
+				if (placement) break;
+			}
+			if (!placement) continue;
+
+			const styled = this.transcriptAnnotationStyle(marker, annotation.open === true);
+			result[placement.row] = compositeTuiLine(
+				result[placement.row] ?? "",
+				styled,
+				placement.column,
+				markerWidth,
+				width,
+			);
+			this.transcriptAnnotationRects.push({
+				id: annotation.id,
+				row: placement.row,
+				column: placement.column,
+				width: markerWidth,
+			});
+			const placementOccupied = occupiedByRow.get(placement.row) ?? [];
+			placementOccupied.push({ start: placement.column, end: placement.column + markerWidth });
+			occupiedByRow.set(placement.row, placementOccupied);
+		}
+		return result;
 	}
 
 	private isMouseSequence(data: string): boolean {
@@ -1725,10 +1943,14 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		}
 		let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
 		screen = this.applySearchHighlights(screen, nextLayout);
+		screen = this.applyTranscriptAnnotationHighlights(screen, nextLayout);
 		screen = this.compositeScrollToEndIndicator(screen, nextLayout, width);
 		screen = this.compositeOverlays(screen, width, height);
 		if (screen.length > height) screen = screen.slice(screen.length - height);
 		screen = this.applySelection(screen, nextLayout);
+		// Annotations are a final transcript overlay: they must not participate in
+		// layout or be painted over by the active text-selection highlight.
+		screen = this.compositeTranscriptAnnotations(screen, nextLayout, width);
 		screen = this.compositeFlashes(screen, width, height);
 
 		const cursorPos = this.extractCursorPosition(screen, height);

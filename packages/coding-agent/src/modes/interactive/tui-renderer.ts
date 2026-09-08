@@ -36,6 +36,8 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,
 			onSelection: options.onTranscriptSelection,
+			transcriptAnnotationStyle: (marker, open) =>
+				open ? theme.bold(theme.inverse(theme.fg("accent", marker))) : theme.fg("accent", marker),
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);
@@ -54,6 +56,7 @@ export function createInteractiveTuiReference(getTui: () => TUI): TUI {
 	return new Proxy({} as TUI, {
 		get: (_target, property) => {
 			const tui = getTui();
+			// SAFETY: The proxy intentionally forwards arbitrary runtime TUI properties.
 			const value = (tui as unknown as Record<PropertyKey, unknown>)[property];
 			if (typeof value !== "function") return value;
 			let methodTui = tui;
@@ -61,6 +64,7 @@ export function createInteractiveTuiReference(getTui: () => TUI): TUI {
 			return (...args: unknown[]) => {
 				const currentTui = getTui();
 				if (currentTui !== methodTui) {
+					// SAFETY: The proxy intentionally forwards arbitrary runtime TUI properties.
 					const currentMethod = (currentTui as unknown as Record<PropertyKey, unknown>)[property];
 					if (typeof currentMethod !== "function") {
 						throw new TypeError(`TUI property ${String(property)} is not callable`);
@@ -72,6 +76,7 @@ export function createInteractiveTuiReference(getTui: () => TUI): TUI {
 			};
 		},
 		set: (_target, property, value) => {
+			// SAFETY: The proxy intentionally forwards arbitrary runtime TUI properties.
 			const tui = getTui() as unknown as Record<PropertyKey, unknown>;
 			tui[property] = value;
 			return true;

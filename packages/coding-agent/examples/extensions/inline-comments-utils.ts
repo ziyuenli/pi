@@ -1,26 +1,130 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, TranscriptSelection } from "@earendil-works/pi-coding-agent";
+
+export const INLINE_COMMENT_STATE_TYPE = "inline-comments:state";
+
+export interface InlineCommentAnnotationSource {
+	entryId: string;
+	quote: string;
+	comment: string;
+	selection?: TranscriptSelection;
+}
+
+export interface InlineCommentTranscriptAnnotation {
+	id: string;
+	marker: string;
+	selection: TranscriptSelection;
+	open: boolean;
+	onOpen: (selection: TranscriptSelection) => void;
+}
+
+export function restoreInlineCommentState(ctx: ExtensionContext): InlineCommentAnnotationSource[] {
+	const branch = ctx.sessionManager.getBranch();
+	for (let index = branch.length - 1; index >= 0; index--) {
+		const entry = branch[index];
+		if (entry.type !== "custom" || entry.customType !== INLINE_COMMENT_STATE_TYPE) continue;
+		const data = entry.data;
+		if (!isRecord(data) || data.version !== 1 || !Array.isArray(data.comments)) continue;
+		return data.comments.filter(isInlineCommentAnnotationSource);
+	}
+	return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function isPoint(value: unknown): value is { row: number; column: number } {
+	return (
+		isRecord(value) &&
+		typeof value.row === "number" &&
+		Number.isInteger(value.row) &&
+		value.row >= 0 &&
+		typeof value.column === "number" &&
+		Number.isInteger(value.column) &&
+		value.column >= 0
+	);
+}
+
+function isTranscriptSelection(value: unknown): value is TranscriptSelection {
+	if (!isRecord(value) || typeof value.text !== "string") return false;
+	if (!isRecord(value.document) || !isRecord(value.viewport)) return false;
+	return (
+		isPoint(value.document.start) &&
+		isPoint(value.document.end) &&
+		isPoint(value.viewport.start) &&
+		isPoint(value.viewport.end)
+	);
+}
+
+function isInlineCommentAnnotationSource(value: unknown): value is InlineCommentAnnotationSource {
+	return (
+		isRecord(value) &&
+		typeof value.entryId === "string" &&
+		typeof value.quote === "string" &&
+		typeof value.comment === "string" &&
+		(value.selection === undefined || isTranscriptSelection(value.selection))
+	);
+}
+
+export function createTranscriptAnnotations(
+	comments: readonly InlineCommentAnnotationSource[],
+	onOpen: (index: number, selection?: TranscriptSelection) => void,
+	openIndex?: number,
+): InlineCommentTranscriptAnnotation[] {
+	return comments.flatMap((comment, index) => {
+		if (!comment.selection) return [];
+		return [
+			{
+				id: `inline-comment-${index + 1}`,
+				marker: `🫧${index + 1}`,
+				selection: comment.selection,
+				open: openIndex === index,
+				onOpen: (selection) => onOpen(index, selection),
+			},
+		];
+	});
+}
 
 function normalizeRenderedText(text: string): string {
 	return text.normalize().replaceAll(/\s+/g, " ").trim();
 }
 
+function normalizeMarkdownText(text: string): string {
+	return normalizeRenderedText(
+		text
+			.replaceAll(/```[^\n]*\n?/g, "")
+			.replaceAll(/`([^`]+)`/g, "$1")
+			.replaceAll(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+			.replaceAll(/^\s{0,3}#{1,6}\s+/gm, "")
+			.replaceAll(/^\s{0,3}>\s?/gm, "")
+			.replaceAll(/^\s{0,3}[-*+]\s+/gm, "")
+			.replaceAll(/[*_~]/g, ""),
+	);
+}
+
 export function findAssistantEntryId(ctx: ExtensionContext, quote: string): string | undefined {
 	const normalizedQuote = normalizeRenderedText(quote);
-	let latestAssistantId: string | undefined;
+	if (!normalizedQuote) return undefined;
 	const branch = ctx.sessionManager.getBranch();
 	for (let index = branch.length - 1; index >= 0; index--) {
 		const entry = branch[index];
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-		latestAssistantId ??= entry.id;
 		const text = entry.message.content
-			.filter((part): part is { type: "text"; text: string } => part.type === "text")
-			.map((part) => part.text)
+			.filter(
+				(part: { type: string; text?: string }): part is { type: "text"; text: string } =>
+					part.type === "text" && typeof part.text === "string",
+			)
+			.map((part: { text: string }) => part.text)
 			.join("\n");
-		if (normalizeRenderedText(text).includes(normalizedQuote)) return entry.id;
+		if (
+			normalizeRenderedText(text).includes(normalizedQuote) ||
+			normalizeMarkdownText(text).includes(normalizedQuote)
+		) {
+			return entry.id;
+		}
 	}
 
-	// Fullscreen selections contain rendered Markdown rather than the source
-	// message. If formatting changed the text, the selected quote remains the
-	// durable anchor and the latest assistant entry supplies context.
-	return latestAssistantId;
+	// Never guess an assistant entry: a wrong attachment is worse than asking
+	// the user to retry with a more specific quote.
+	return undefined;
 }

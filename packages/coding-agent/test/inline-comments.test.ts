@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { findAssistantEntryId } from "../examples/extensions/inline-comments-utils.ts";
-import type { ExtensionContext } from "../src/core/extensions/index.ts";
+import {
+	createTranscriptAnnotations,
+	findAssistantEntryId,
+	INLINE_COMMENT_STATE_TYPE,
+	restoreInlineCommentState,
+} from "../examples/extensions/inline-comments-utils.ts";
+import type { ExtensionContext, TranscriptSelection } from "../src/core/extensions/index.ts";
 
 function contextWithAssistants(messages: Array<{ id: string; text: string }>): ExtensionContext {
 	return {
@@ -20,6 +25,29 @@ function contextWithAssistants(messages: Array<{ id: string; text: string }>): E
 }
 
 describe("inline comments", () => {
+	it("creates a numbered annotation that keeps the selected range and opens its comment", () => {
+		const selection: TranscriptSelection = {
+			text: "beta",
+			document: { start: { row: 1, column: 0 }, end: { row: 1, column: 4 } },
+			viewport: { start: { row: 1, column: 0 }, end: { row: 1, column: 4 } },
+		};
+		const opened: number[] = [];
+		const annotations = createTranscriptAnnotations(
+			[{ entryId: "assistant-entry", quote: "beta", comment: "test", selection }],
+			(index) => opened.push(index),
+		);
+
+		expect(annotations).toHaveLength(1);
+		expect(annotations[0]).toMatchObject({
+			id: "inline-comment-1",
+			marker: "🫧1",
+			selection,
+			open: false,
+		});
+		annotations[0]?.onOpen(selection);
+		expect(opened).toEqual([0]);
+	});
+
 	it("matches an older assistant entry after fullscreen line wrapping", () => {
 		const ctx = contextWithAssistants([
 			{ id: "selected-entry", text: "This assistant response wraps between two words." },
@@ -29,9 +57,34 @@ describe("inline comments", () => {
 		expect(findAssistantEntryId(ctx, "This assistant response wraps\nbetween two words.")).toBe("selected-entry");
 	});
 
-	it("falls back to the latest completed assistant when rendering changes the source text", () => {
-		const ctx = contextWithAssistants([{ id: "assistant-entry", text: "The **important** result." }]);
+	it("matches rendered Markdown without guessing an unrelated assistant entry", () => {
+		const ctx = contextWithAssistants([
+			{ id: "assistant-entry", text: "The **important** result." },
+			{ id: "newer-entry", text: "A different response." },
+		]);
 
 		expect(findAssistantEntryId(ctx, "The important result.")).toBe("assistant-entry");
+		expect(findAssistantEntryId(ctx, "not present anywhere")).toBeUndefined();
+	});
+
+	it("restores only the latest valid state entry from the active session branch", () => {
+		const ctx = {
+			sessionManager: {
+				getBranch: () => [
+					{
+						type: "custom",
+						customType: INLINE_COMMENT_STATE_TYPE,
+						data: { version: 1, comments: [{ entryId: "a", quote: "beta", comment: "Keep it." }] },
+					},
+					{
+						type: "custom",
+						customType: INLINE_COMMENT_STATE_TYPE,
+						data: { version: 1, comments: [{ entryId: "b", quote: "gamma", comment: "Change it." }] },
+					},
+				],
+			},
+		} as unknown as ExtensionContext;
+
+		expect(restoreInlineCommentState(ctx)).toEqual([{ entryId: "b", quote: "gamma", comment: "Change it." }]);
 	});
 });
