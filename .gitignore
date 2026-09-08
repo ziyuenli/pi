@@ -50,3 +50,7 @@ packages/agent/docs/extensions/pi-server-artifact/index.md
 
 # Generated transcript-selection feature patch (managed by update-pi.sh)
 transcript-selection.patch
+
+# update-pi.sh runtime state
+transcript-selection.state
+update-pi.state
