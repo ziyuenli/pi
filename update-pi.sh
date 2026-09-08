@@ -34,10 +34,9 @@ fi
 log() { printf '\033[1;34m[update-pi]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[update-pi]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# After a successful update, sync the Pi settings lastChangelogVersion so the
-# "Update Available" reminder reflects the version we just installed (instead of
-# comparing against a stale value). This is user-machine config (not repo code)
-# and is written per machine via the Pi config dir.
+# After a successful update, sync Pi's changelog/telemetry marker to the version
+# just installed. This is user-machine config (not repo code) and is written per
+# machine via the Pi config dir.
 sync_last_changelog_version() {
 	local version="$1"
 	# Drop a leading 'v' (e.g. v0.85.1 -> 0.85.1) so it matches npm semver.
@@ -195,7 +194,7 @@ git -C "$REPO" commit -m "feat: transcript-selection on $TARGET" \
 # Remember the baseline so the next run compares against it.
 echo "$TARGET" > "$STATE_FILE"
 
-# Keep the user's Pi "Update Available" reminder accurate for this machine.
+# Keep the user's Pi changelog marker accurate for this machine.
 sync_last_changelog_version "$NEW_VERSION"
 
 cat <<EOF
