@@ -2620,13 +2620,14 @@ const unsubscribe = ctx.ui.onTranscriptSelection((selection) => {
   console.log(selection.text);
   console.log(selection.document); // Unscrolled transcript rows/columns
   console.log(selection.viewport); // Current terminal rows/columns for overlay anchoring
+  console.log(selection.sourceId); // Assistant session-entry ID when the range is wholly in one response
 });
 
 // Call during session shutdown or when the listener is no longer needed.
 unsubscribe();
 ```
 
-Positions use zero-based rows and columns; each `end` position is exclusive. Regular TUI, RPC, JSON, and print modes do not emit selections. Use the viewport range with `ctx.ui.custom(..., { overlay: true, overlayOptions })` to place an editor near the selected text. See [examples/extensions/inline-comments.ts](../examples/extensions/inline-comments.ts) for a complete staged-comment workflow.
+Positions use zero-based rows and columns; each `end` position is exclusive. In coding-agent, `sourceId` is the session entry ID when the complete range is inside one rendered assistant response, so extensions can attach comments without matching Markdown-rendered text. Regular TUI, RPC, JSON, and print modes do not emit selections. Use the viewport range with `ctx.ui.custom(..., { overlay: true, overlayOptions })` to place an editor near the selected text. See [examples/extensions/inline-comments.ts](../examples/extensions/inline-comments.ts) for a complete staged-comment workflow.
 
 #### Transcript annotations
 

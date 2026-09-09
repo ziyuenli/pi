@@ -125,6 +125,31 @@ describe("createInteractiveTui", () => {
 			tui.stop();
 		}
 	});
+
+	it("resolves a streaming source after its message is persisted", () => {
+		const streamingMessage = { role: "assistant" };
+		const component = { render: () => [], invalidate: () => {} } satisfies Component;
+		let branch: unknown[] = [];
+		const context = Object.assign(Object.create(null), {
+			transcriptSelectionSources: new Map([[component, streamingMessage]]),
+			transcriptEntryIds: new WeakMap<object, string>(),
+			sessionManager: { getBranch: () => branch },
+			getTranscriptEntryId: (
+				InteractiveMode.prototype as unknown as {
+					getTranscriptEntryId(message: typeof streamingMessage): string | undefined;
+				}
+			).getTranscriptEntryId,
+		});
+		const prototype = InteractiveMode.prototype as unknown as {
+			getTranscriptSelectionSources(this: typeof context): Array<{ component: Component; id: string }>;
+		};
+
+		expect(prototype.getTranscriptSelectionSources.call(context)).toEqual([]);
+		branch = [{ type: "message", id: "assistant-current", message: streamingMessage }];
+		expect(prototype.getTranscriptSelectionSources.call(context)).toEqual([
+			{ component, id: "assistant-current", selectionBoundary: true },
+		]);
+	});
 	it("replaces the renderer and restores the previous screen for resume-hint exits", async () => {
 		const terminal = new RecordingTerminal(40, 8);
 		const renderer = createInteractiveTui({
@@ -160,6 +185,7 @@ describe("createInteractiveTui", () => {
 			options: { tuiMode: "regular" as TuiMode },
 			themeController: { rebindTui: () => {} },
 			extensionTerminalInputSubscriptions: new Set<never>(),
+			extensionTranscriptAnnotations: new Map(),
 		}) as SwitchContext;
 		stableUi = createInteractiveTuiReference(() => context.renderer);
 		context.ui = stableUi;

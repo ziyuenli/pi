@@ -1,4 +1,4 @@
-import type { Terminal, TuiTextSelection } from "@earendil-works/pi-tui";
+import type { Terminal, TuiTextSelection, TuiTextSelectionSource } from "@earendil-works/pi-tui";
 import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
@@ -13,6 +13,7 @@ export interface InteractiveTuiOptions {
 	readonly onRightClickPaste?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
 	readonly onTranscriptSelection?: (selection: TuiTextSelection) => void;
+	readonly getTranscriptSelectionSources?: () => readonly TuiTextSelectionSource[];
 }
 
 /** Composition root shared by coding-agent presentations. */
@@ -36,6 +37,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,
 			onSelection: options.onTranscriptSelection,
+			getTranscriptSelectionSources: options.getTranscriptSelectionSources,
 			transcriptAnnotationStyle: (marker, open) =>
 				open
 					? theme.bold(theme.inverse(theme.fg("accent", marker)))

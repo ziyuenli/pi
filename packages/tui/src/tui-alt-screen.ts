@@ -13,6 +13,7 @@ import {
 	getScrollbarGeometry,
 	getScrollViewBox,
 	getScrollViewsAt,
+	type LayoutBox,
 	type LayoutFrame,
 	renderLayoutFrame,
 	type ScrollbarGeometry,
@@ -101,6 +102,16 @@ export interface TuiTextSelectionPoint {
 	column: number;
 }
 
+/** An application-owned source region that can identify a rendered selection. */
+export interface TuiTextSelectionSource {
+	/** Opaque identifier supplied by the application. */
+	id: string;
+	/** Component whose layout bounds contain the source region. */
+	component: Component;
+	/** Clamp mouse selections anchored in this region to its rendered bounds. */
+	selectionBoundary?: boolean;
+}
+
 /** A completed application-owned text selection. End positions are exclusive. */
 export interface TuiTextSelection {
 	text: string;
@@ -112,6 +123,8 @@ export interface TuiTextSelection {
 		start: TuiTextSelectionPoint;
 		end: TuiTextSelectionPoint;
 	};
+	/** Identifier of the unique application-owned source containing the selection, when known. */
+	sourceId?: string;
 }
 
 /** A clickable marker attached to a fullscreen transcript selection. */
@@ -129,6 +142,15 @@ interface TranscriptAnnotationRect {
 	row: number;
 	column: number;
 	width: number;
+}
+
+function findLayoutBox(root: LayoutBox, component: Component): LayoutBox | undefined {
+	if (root.component === component) return root;
+	for (const child of root.children) {
+		const match = findLayoutBox(child, component);
+		if (match) return match;
+	}
+	return undefined;
 }
 
 interface SelectionRange {
@@ -221,6 +243,8 @@ export interface TuiAltScreenOptions {
 	copyOnSelect?: boolean;
 	/** Called when the user completes a non-empty application-owned text selection. */
 	onSelection?: (selection: TuiTextSelection) => void;
+	/** Resolve rendered component regions to opaque identifiers when a selection is completed. */
+	getTranscriptSelectionSources?: () => readonly TuiTextSelectionSource[];
 	/** Style a transcript annotation marker without changing its visible width. */
 	transcriptAnnotationStyle?: (marker: string, open: boolean) => string;
 	/**
@@ -283,6 +307,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly onRightClickPaste?: () => void;
 	private copyOnSelect: boolean;
 	private readonly onSelection?: (selection: TuiTextSelection) => void;
+	private readonly getTranscriptSelectionSources?: () => readonly TuiTextSelectionSource[];
 	private readonly transcriptAnnotationStyle: (marker: string, open: boolean) => string;
 	private transcriptAnnotations: readonly TuiTranscriptAnnotation[] = [];
 	private transcriptAnnotationRects: TranscriptAnnotationRect[] = [];
@@ -315,6 +340,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.onRightClickPaste = options.onRightClickPaste;
 		this.copyOnSelect = options.copyOnSelect ?? true;
 		this.onSelection = options.onSelection;
+		this.getTranscriptSelectionSources = options.getTranscriptSelectionSources;
 		this.transcriptAnnotationStyle = options.transcriptAnnotationStyle ?? ((marker) => marker);
 		this.copySelection = options.copySelection;
 		this.addInputListener((data) => this.handleViewportInput(data));
@@ -1304,6 +1330,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	}
 
 	private updateSelectionFocus(point: SelectionPoint): void {
+		point = this.constrainSelectionPoint(point);
 		if (this.selectionGranularity === "character" || !this.selectionInitialRange) {
 			this.selectionFocus = point;
 			return;
@@ -1564,7 +1591,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const documentStart = { row: selection.start.row, column: startColumn };
 		const documentEnd = { row: selection.end.row, column: endColumn };
-		return {
+		const result: TuiTextSelection = {
 			text,
 			document: { start: documentStart, end: documentEnd },
 			viewport: {
@@ -1577,6 +1604,77 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 					column: documentEnd.column + viewportColumnOffset,
 				},
 			},
+		};
+		const sourceId = this.getTranscriptSelectionSourceId(selection);
+		return sourceId === undefined ? result : { ...result, sourceId };
+	}
+
+	private getTranscriptSelectionSourceBounds(
+		scrollView: ScrollView,
+		source: TuiTextSelectionSource,
+	): { startRow: number; endRow: number; startColumn: number; endColumn: number } | undefined {
+		if (!this.currentLayout) return undefined;
+		const scrollBox = getScrollViewBox(this.currentLayout, scrollView);
+		if (!scrollBox) return undefined;
+		const sourceBox = findLayoutBox(scrollBox, source.component);
+		if (!sourceBox) return undefined;
+		return {
+			startRow: sourceBox.rect.y - scrollBox.rect.y + scrollView.scrollTop,
+			endRow: sourceBox.rect.y - scrollBox.rect.y + scrollView.scrollTop + sourceBox.rect.height,
+			startColumn: sourceBox.rect.x - scrollBox.rect.x,
+			endColumn: sourceBox.rect.x - scrollBox.rect.x + sourceBox.rect.width,
+		};
+	}
+
+	private getTranscriptSelectionSourceId(selection: SelectionRange): string | undefined {
+		const scrollView = selection.start.scrollView;
+		if (!scrollView || selection.end.scrollView !== scrollView) return undefined;
+		const getSources = this.getTranscriptSelectionSources;
+		if (!getSources) return undefined;
+
+		const startRow = selection.start.row;
+		const endRow = selection.end.row;
+		const matches: string[] = [];
+		for (const source of getSources()) {
+			const bounds = this.getTranscriptSelectionSourceBounds(scrollView, source);
+			if (bounds && bounds.startRow <= startRow && endRow < bounds.endRow) matches.push(source.id);
+		}
+		return matches.length === 1 ? matches[0] : undefined;
+	}
+
+	private getTranscriptSelectionBoundarySourceAt(point: SelectionPoint): TuiTextSelectionSource | undefined {
+		const scrollView = point.scrollView;
+		const getSources = this.getTranscriptSelectionSources;
+		if (!scrollView || !getSources) return undefined;
+
+		let match: TuiTextSelectionSource | undefined;
+		for (const source of getSources()) {
+			if (source.selectionBoundary !== true) continue;
+			const bounds = this.getTranscriptSelectionSourceBounds(scrollView, source);
+			if (
+				!bounds ||
+				point.row < bounds.startRow ||
+				point.row >= bounds.endRow ||
+				point.col < bounds.startColumn ||
+				point.col >= bounds.endColumn
+			)
+				continue;
+			if (match) return undefined;
+			match = source;
+		}
+		return match;
+	}
+
+	private constrainSelectionPoint(point: SelectionPoint): SelectionPoint {
+		const anchor = this.selectionAnchor;
+		if (!anchor || anchor.scrollView !== point.scrollView) return point;
+		const source = this.getTranscriptSelectionBoundarySourceAt(anchor);
+		if (!source || !point.scrollView) return point;
+		const bounds = this.getTranscriptSelectionSourceBounds(point.scrollView, source);
+		if (!bounds) return point;
+		return {
+			...point,
+			row: Math.max(bounds.startRow, Math.min(bounds.endRow - 1, point.row)),
 		};
 	}
 

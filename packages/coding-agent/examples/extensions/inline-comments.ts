@@ -234,7 +234,7 @@ export default function inlineComments(pi: ExtensionAPI) {
 			pendingSelection = undefined;
 			return false;
 		}
-		const entryId = findAssistantEntryId(ctx, quote);
+		const entryId = findAssistantEntryId(ctx, quote, selection.sourceId);
 		if (!entryId) {
 			pendingSelection = undefined;
 			if (notifyOnFailure) {

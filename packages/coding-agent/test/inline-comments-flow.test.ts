@@ -75,11 +75,12 @@ function harness(
 		await registered.handler(a, ctx);
 	};
 	emit("session_start");
-	const selectText = (text: string) => {
+	const selectText = (text: string, sourceId = "assistant-1") => {
 		select?.({
 			text,
 			document: { start: { row: 0, column: 0 }, end: { row: 0, column: text.length } },
 			viewport: { start: { row: 0, column: 0 }, end: { row: 0, column: text.length } },
+			sourceId,
 		});
 	};
 	return { emit, command, selectText, custom, notify, ctx };
@@ -95,6 +96,14 @@ describe("long-response continuous commenting", () => {
 		}
 		expect(h.custom).toHaveBeenCalledTimes(3);
 		expect(h.notify).not.toHaveBeenCalledWith(expect.anything(), "warning");
+	});
+
+	it("uses the rendered source ID when a visible line is not present in source Markdown", async () => {
+		const h = harness({ customResults: ["note"] });
+		await h.command("inline-comments");
+		h.selectText("rendered table cell");
+		await h.command("inline-comments:open");
+		expect(h.custom).toHaveBeenCalledTimes(1);
 	});
 
 	it("after canceling an editor, selecting another part still opens", async () => {
@@ -131,7 +140,7 @@ describe("long-response continuous commenting", () => {
 	it("a selection that matches no assistant entry reports the real reason instead of 'no selection'", async () => {
 		const h = harness();
 		await h.command("inline-comments");
-		h.selectText("footer status text");
+		h.selectText("footer status text", "");
 		await h.command("inline-comments:open");
 		expect(h.notify).toHaveBeenCalledWith(expect.stringContaining("assistant"), "warning");
 	});

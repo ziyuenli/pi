@@ -1270,6 +1270,57 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("identifies the unique rendered source for historical selections after scrolling", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text(Array.from({ length: 8 }, (_, index) => `assistant line ${index + 1}`).join("\n"), 0, 0);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(source, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+		tui.scrollToBottom();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;20;2M");
+		terminal.sendInput("\x1b[<0;20;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "assistant line 5\nassistant line 6", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("keeps a source selection inside the assistant component when a drag enters a notification row", async () => {
+		const terminal = new RecordingTerminal(40, 4);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text("assistant line 1\nassistant line 2", 0, 0);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source, selectionBoundary: true }],
+		});
+		tui.setLayoutRoot(
+			new ScrollView(new VStack([source, new Text("Warning: transient notification", 0, 0)]), {
+				follow: "end",
+				primary: true,
+			}),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;2M");
+		terminal.sendInput("\x1b[<32;40;3M");
+		terminal.sendInput("\x1b[<0;40;3m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "assistant line 2", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
 	it("renders clickable transcript annotations and highlights open ranges", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		let opened = 0;

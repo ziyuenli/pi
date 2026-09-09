@@ -22,6 +22,7 @@ import type {
 	SlashCommand,
 	TuiMainScreenRenderState,
 	TuiTextSelection,
+	TuiTextSelectionSource,
 	TuiTranscriptAnnotation,
 } from "@earendil-works/pi-tui";
 import * as TuiLayouts from "@earendil-works/pi-tui";
@@ -481,6 +482,8 @@ export class InteractiveMode {
 		unsubscribe: () => void;
 	}>();
 	private transcriptSelectionHandlers = new Set<TranscriptSelectionHandler>();
+	private transcriptSelectionSources = new Map<Component, AgentMessage>();
+	private transcriptEntryIds = new WeakMap<object, string>();
 	private extensionTranscriptAnnotations = new Map<string, readonly TuiTranscriptAnnotation[]>();
 
 	// Extension widgets (components rendered above/below the editor)
@@ -543,6 +546,7 @@ export class InteractiveMode {
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			onTranscriptSelection: (selection) => this.emitTranscriptSelection(selection),
+			getTranscriptSelectionSources: () => this.getTranscriptSelectionSources(),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -830,6 +834,7 @@ export class InteractiveMode {
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			onTranscriptSelection: (selection) => this.emitTranscriptSelection(selection),
+			getTranscriptSelectionSources: () => this.getTranscriptSelectionSources(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -2423,6 +2428,15 @@ export class InteractiveMode {
 		}
 	}
 
+	private getTranscriptSelectionSources(): readonly TuiTextSelectionSource[] {
+		const sources: TuiTextSelectionSource[] = [];
+		for (const [component, message] of this.transcriptSelectionSources) {
+			const id = this.getTranscriptEntryId(message);
+			if (id) sources.push({ component, id, selectionBoundary: true });
+		}
+		return sources;
+	}
+
 	private addTranscriptSelectionListener(handler: TranscriptSelectionHandler): () => void {
 		this.transcriptSelectionHandlers.add(handler);
 		return () => this.transcriptSelectionHandlers.delete(handler);
@@ -3011,7 +3025,6 @@ export class InteractiveMode {
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
-			if (!text) return;
 
 			// Handle commands
 			if (text === "/settings") {
@@ -3199,7 +3212,7 @@ export class InteractiveMode {
 			} else {
 				this.pendingUserInputs.push(text);
 			}
-			this.editor.addToHistory?.(text);
+			if (text) this.editor.addToHistory?.(text);
 		};
 	}
 
@@ -3283,6 +3296,7 @@ export class InteractiveMode {
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
+					this.registerTranscriptSelectionSource(this.streamingComponent, event.message);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
 					this.ui.requestRender();
 				}
@@ -3337,6 +3351,7 @@ export class InteractiveMode {
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.streamingComponent.updateContent(this.streamingMessage, false);
+					this.registerTranscriptSelectionSource(this.streamingComponent, this.streamingMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -3623,6 +3638,16 @@ export class InteractiveMode {
 		this.chatContainer.addChild(component);
 	}
 
+	private getTranscriptEntryId(message: AgentMessage): string | undefined {
+		const renderedEntryId = this.transcriptEntryIds.get(message);
+		if (renderedEntryId) return renderedEntryId;
+		return this.sessionManager.getBranch().find((entry) => entry.type === "message" && entry.message === message)?.id;
+	}
+
+	private registerTranscriptSelectionSource(component: Component, message: AgentMessage): void {
+		this.transcriptSelectionSources.set(component, message);
+	}
+
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
 		switch (message.role) {
 			case "bashExecution": {
@@ -3718,6 +3743,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				this.chatContainer.addChild(assistantComponent);
+				this.registerTranscriptSelectionSource(assistantComponent, message);
 				break;
 			}
 			case "toolResult": {
@@ -3830,11 +3856,16 @@ export class InteractiveMode {
 		entries: SessionEntry[],
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
+		this.transcriptSelectionSources?.clear();
+		this.transcriptEntryIds = new WeakMap();
 		const items = entries.flatMap((entry): RenderSessionItem[] => {
 			if (entry.type === "custom") {
 				return [entry];
 			}
 			const messages = sessionEntryToContextMessages(entry);
+			if (entry.type === "message") {
+				for (const message of messages) this.transcriptEntryIds.set(message, entry.id);
+			}
 			if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
 				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
 			}

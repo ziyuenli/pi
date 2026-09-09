@@ -67,6 +67,18 @@ describe("inline comments", () => {
 		expect(findAssistantEntryId(ctx, "not present anywhere")).toBeUndefined();
 	});
 
+	it("uses the rendered source ID for every visible line, even when Markdown changes its text", () => {
+		const ctx = contextWithAssistants([
+			{ id: "older-entry", text: "Older response." },
+			{ id: "selected-entry", text: "**Source text** that renders differently." },
+		]);
+
+		for (const renderedLine of ["Source text", "rendered table cell", "a line with a visual border"]) {
+			expect(findAssistantEntryId(ctx, renderedLine, "selected-entry")).toBe("selected-entry");
+		}
+		expect(findAssistantEntryId(ctx, "Source text", "missing-entry")).toBeUndefined();
+	});
+
 	it("restores only the latest valid state entry from the active session branch", () => {
 		const ctx = {
 			sessionManager: {
