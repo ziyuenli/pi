@@ -89,6 +89,13 @@ function normalizeRenderedText(text: string): string {
 	return text.normalize().replaceAll(/\s+/g, " ").trim();
 }
 
+// Collapse all whitespace, so a mouse selection that lost a wrap or blank-line
+// space still matches the source message text. Selector text is a contiguous
+// run of visible characters; after removing whitespace it must appear verbatim.
+function collapseWhitespace(text: string): string {
+	return text.normalize().replaceAll(/\s+/g, "");
+}
+
 function normalizeMarkdownText(text: string): string {
 	return normalizeRenderedText(
 		text
@@ -116,9 +123,17 @@ export function findAssistantEntryId(ctx: ExtensionContext, quote: string): stri
 			)
 			.map((part: { text: string }) => part.text)
 			.join("\n");
+		const plain = normalizeRenderedText(text);
+		const markdown = normalizeMarkdownText(text);
+		if (plain.includes(normalizedQuote) || markdown.includes(normalizedQuote)) {
+			return entry.id;
+		}
+		// Fall back to whitespace-insensitive matching when the rendered selection
+		// lost a wrap or blank-line space the source message keeps.
+		const collapsedQuote = collapseWhitespace(normalizedQuote);
 		if (
-			normalizeRenderedText(text).includes(normalizedQuote) ||
-			normalizeMarkdownText(text).includes(normalizedQuote)
+			collapsedQuote.length >= 4 &&
+			(collapseWhitespace(plain).includes(collapsedQuote) || collapseWhitespace(markdown).includes(collapsedQuote))
 		) {
 			return entry.id;
 		}
