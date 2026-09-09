@@ -37,7 +37,9 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			copyOnSelect: options.fullscreenCopyOnSelect,
 			onSelection: options.onTranscriptSelection,
 			transcriptAnnotationStyle: (marker, open) =>
-				open ? theme.bold(theme.inverse(theme.fg("accent", marker))) : theme.fg("accent", marker),
+				open
+					? theme.bold(theme.inverse(theme.fg("accent", marker)))
+					: theme.bold(theme.bg("selectedBg", theme.fg("accent", marker))),
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);

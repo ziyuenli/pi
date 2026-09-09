@@ -163,7 +163,7 @@ export default function inlineComments(pi: ExtensionAPI) {
 								const width = visibleWidth(label);
 								return {
 									component: new MouseRegion(
-										new Text(theme.fg("accent", label), 0, 0),
+										new Text(theme.bold(theme.fg("accent", label)), 0, 0),
 										(event: TuiMouseEvent) => {
 											if (event.button !== "left") return undefined;
 											if (event.type === "press") return { handled: true, render: false };
