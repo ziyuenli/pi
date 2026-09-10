@@ -4,6 +4,7 @@
 
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.ts";
+import { LAYOUT_NODE, type LayoutNode } from "./layout-node.ts";
 import type { Terminal } from "./terminal.ts";
 import {
 	isOsc11BackgroundColorResponse,
@@ -333,6 +334,12 @@ export class Container implements Component {
 
 	clear(): void {
 		this.children = [];
+	}
+
+	[LAYOUT_NODE](): LayoutNode {
+		// ponytail: exposing children as a vstack lets the layout tree address each
+		// child individually (transcript selection sources, per-component hit testing).
+		return { type: "vstack", entries: this.children.map((component) => ({ component })), gap: 0, align: "stretch" };
 	}
 
 	invalidate(): void {

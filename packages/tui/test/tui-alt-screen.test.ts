@@ -21,7 +21,7 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
-import type { TuiMouseEvent } from "../src/tui.ts";
+import { Container, type TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -1314,6 +1314,33 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 
 		assert.deepStrictEqual(selections, [{ text: "ordinary blue tail", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("preserves source ownership for a component nested inside a Container below the ScrollView", async () => {
+		// Mirrors the real fullscreen chat: ScrollView wraps the document Container,
+		// and transcript selection sources are assistant components nested inside it.
+		const terminal = new RecordingTerminal(40, 2);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text("assistant body line", 0, 0);
+		const document = new Container();
+		document.addChild(new Text("header", 0, 0));
+		document.addChild(source);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(document, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;2M");
+		terminal.sendInput("\x1b[<32;20;2M");
+		terminal.sendInput("\x1b[<0;20;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "assistant body line", sourceId: "assistant-entry" }]);
 		tui.stop();
 	});
 
