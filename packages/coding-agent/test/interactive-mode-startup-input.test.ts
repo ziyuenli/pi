@@ -78,6 +78,19 @@ describe("InteractiveMode startup input", () => {
 		expect(context.editor.addToHistory).toHaveBeenCalledWith("early prompt");
 	});
 
+	it("forwards an empty submit so input extensions can handle staged comments", async () => {
+		const context = createSubmitContext();
+		const onInput = vi.fn<(text: string) => void>();
+		context.onInputCallback = onInput;
+		interactiveModePrototype.setupEditorSubmitHandler.call(context);
+
+		await context.defaultEditor.onSubmit?.("   ");
+
+		expect(onInput).toHaveBeenCalledWith("");
+		expect(context.editor.addToHistory).not.toHaveBeenCalled();
+		expect(context.flushPendingBashComponents).toHaveBeenCalledTimes(1);
+	});
+
 	it("returns queued startup input before installing a new input callback", async () => {
 		const context: InputContext = {
 			pendingUserInputs: ["queued prompt"],

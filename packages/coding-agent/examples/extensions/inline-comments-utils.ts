@@ -105,8 +105,20 @@ function normalizeMarkdownText(text: string): string {
 			.replaceAll(/\[([^\]]+)\]\([^)]*\)/g, "$1")
 			.replaceAll(/^\s{0,3}#{1,6}\s+/gm, "")
 			.replaceAll(/^\s{0,3}>\s?/gm, "")
-			.replaceAll(/^\s{0,3}[-*+]\s+/gm, "")
+			.replaceAll(/^\s{0,3}(?:[-*+]|\d+[.)])\s+/gm, "")
 			.replaceAll(/[*_~]/g, ""),
+	);
+}
+
+// Markdown renders list, heading, and blockquote prefixes as visible terminal text.
+// Remove those prefixes from the selection variant that is compared with the
+// source after Markdown syntax has been normalized.
+function normalizeRenderedMarkdownText(text: string): string {
+	return normalizeRenderedText(
+		text
+			.replaceAll(/(^|\n)\s{0,3}(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/gm, "$1")
+			.replaceAll(/(^|\n)\s{0,3}[│|]\s?/gm, "$1")
+			.replaceAll(/```[^\n]*\n?/g, ""),
 	);
 }
 
@@ -119,6 +131,7 @@ export function findAssistantEntryId(ctx: ExtensionContext, quote: string, sourc
 			: undefined;
 	}
 	const normalizedQuote = normalizeRenderedText(quote);
+	const renderedMarkdownQuote = normalizeRenderedMarkdownText(quote);
 	if (!normalizedQuote) return undefined;
 	const branch = ctx.sessionManager.getBranch();
 	for (let index = branch.length - 1; index >= 0; index--) {
@@ -133,7 +146,11 @@ export function findAssistantEntryId(ctx: ExtensionContext, quote: string, sourc
 			.join("\n");
 		const plain = normalizeRenderedText(text);
 		const markdown = normalizeMarkdownText(text);
-		if (plain.includes(normalizedQuote) || markdown.includes(normalizedQuote)) {
+		if (
+			plain.includes(normalizedQuote) ||
+			markdown.includes(normalizedQuote) ||
+			(renderedMarkdownQuote.length > 0 && markdown.includes(renderedMarkdownQuote))
+		) {
 			return entry.id;
 		}
 		// Fall back to whitespace-insensitive matching when the rendered selection

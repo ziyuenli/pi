@@ -7,6 +7,7 @@ import {
 } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
+import { Markdown } from "../src/components/markdown.ts";
 import { MouseRegion } from "../src/components/mouse-region.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { SelectList } from "../src/components/select-list.ts";
@@ -1291,6 +1292,68 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 
 		assert.deepStrictEqual(selections, [{ text: "assistant line 5\nassistant line 6", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("preserves source ownership when a selection crosses ANSI-styled text", async () => {
+		const terminal = new RecordingTerminal(40, 2);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text("ordinary \x1b[96mblue\x1b[39m tail", 0, 0);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(source, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;20;1M");
+		terminal.sendInput("\x1b[<0;20;1m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "ordinary blue tail", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("preserves source ownership across rendered Markdown, inline code, and LaTeX", async () => {
+		const terminal = new RecordingTerminal(50, 2);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const markdownTheme = {
+			heading: (text: string) => text,
+			link: (text: string) => text,
+			linkUrl: (text: string) => text,
+			code: (text: string) => text,
+			codeBlock: (text: string) => text,
+			codeBlockBorder: (text: string) => text,
+			quote: (text: string) => text,
+			quoteBorder: (text: string) => text,
+			hr: (text: string) => text,
+			listBullet: (text: string) => text,
+			bold: (text: string) => text,
+			italic: (text: string) => text,
+			strikethrough: (text: string) => text,
+			underline: (text: string) => text,
+		};
+		const source = new Markdown("ordinary `inline` with $x^2$ and **Markdown**.", 0, 0, markdownTheme);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(source, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;50;1M");
+		terminal.sendInput("\x1b[<0;50;1m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [
+			{ text: "ordinary inline with x² and Markdown.", sourceId: "assistant-entry" },
+		]);
 		tui.stop();
 	});
 

@@ -3025,7 +3025,6 @@ export class InteractiveMode {
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
-			if (!text) return;
 
 			// Handle commands
 			if (text === "/settings") {
@@ -3213,7 +3212,7 @@ export class InteractiveMode {
 			} else {
 				this.pendingUserInputs.push(text);
 			}
-			this.editor.addToHistory?.(text);
+			if (text) this.editor.addToHistory?.(text);
 		};
 	}
 

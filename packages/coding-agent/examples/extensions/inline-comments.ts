@@ -7,6 +7,7 @@
  *
  * Usage:
  *   /inline-comments         Toggle selection commenting
+ *   /inline-comments:enable  Enable selection commenting
  *   /inline-comments:open    Open inline comment for last selected assistant text (optionally: /inline-comments:open "<selected text>")
  *   /inline-comments:send    Send staged inline comments without another request
  *   /inline-comments:clear   Discard staged comments
@@ -14,8 +15,8 @@
  * After staging a comment, press Enter with an empty input to send the staged feedback.
  *
  * Shortcut:
- *   Alt+E (preferred) / Alt+Shift+E (fallback)
- *   Add a comment to the last selected assistant text
+ *   Alt+E (Option+E on macOS) / Alt+Shift+E (fallback)
+ *   Enable inline commenting and add a comment to the last selected assistant text
  */
 
 import {
@@ -246,6 +247,15 @@ export default function inlineComments(pi: ExtensionAPI) {
 		return true;
 	}
 
+	function enableInlineComments(ctx: ExtensionContext, selection?: TranscriptSelection): void {
+		if (enabled) return;
+		enabled = true;
+		const selectionToStage = selection ?? getSelectionUI(ctx).getTranscriptSelection?.() ?? lastSelection;
+		if (selectionToStage) stageSelection(selectionToStage, ctx, true);
+		refresh(ctx);
+		ctx.ui.notify("Inline commenting enabled.", "info");
+	}
+
 	async function openPendingComment(
 		ctx: ExtensionContext,
 		selectionText?: string,
@@ -352,16 +362,27 @@ export default function inlineComments(pi: ExtensionAPI) {
 	pi.registerCommand("inline-comments", {
 		description: "Toggle inline commenting for fullscreen transcript selections",
 		handler: async (_args, ctx) => {
-			enabled = !enabled;
-			if (!enabled) {
+			if (enabled) {
+				enabled = false;
 				pendingSelection = undefined;
 				openCommentIndex = undefined;
-			} else {
-				const selection = getSelectionUI(ctx).getTranscriptSelection?.() ?? lastSelection;
-				if (selection) stageSelection(selection, ctx, true);
+				refresh(ctx);
+				ctx.ui.notify("Inline commenting disabled.", "info");
+				return;
 			}
-			refresh(ctx);
-			ctx.ui.notify(`Inline commenting ${enabled ? "enabled" : "disabled"}.`, "info");
+			enableInlineComments(ctx);
+		},
+	});
+
+	pi.registerCommand("inline-comments:enable", {
+		description: "Enable inline commenting for fullscreen transcript selections",
+		handler: async (_args, ctx) => {
+			if (enabled) {
+				refresh(ctx);
+				ctx.ui.notify("Inline commenting already enabled.", "info");
+				return;
+			}
+			enableInlineComments(ctx);
 		},
 	});
 
@@ -372,18 +393,16 @@ export default function inlineComments(pi: ExtensionAPI) {
 
 	const openPendingShortcut = async (ctx: ExtensionContext) => {
 		const activeSelection = getSelectionUI(ctx).getTranscriptSelection?.();
-		if (pendingSelection || activeSelection || lastSelection) {
-			if (!enabled) {
-				ctx.ui.notify("Enable /inline-comments to use the shortcut key flow.", "info");
-				return;
-			}
+		const selection = activeSelection ?? lastSelection;
+		if (!enabled) {
+			enableInlineComments(ctx, selection);
+			if (selection && !pendingSelection) return;
+		}
+		if (pendingSelection || selection) {
 			// Prefer the already staged selection; otherwise recover from the live
 			// highlight or the last completed selection (a click after a dialog can
 			// clear the TUI's active selection without producing a new one).
-			if (!pendingSelection) {
-				const selection = activeSelection ?? lastSelection;
-				if (selection && !stageSelection(selection, ctx, true)) return;
-			}
+			if (!pendingSelection && selection && !stageSelection(selection, ctx, true)) return;
 		} else if (!supportsTranscriptSelection) {
 			ctx.ui.notify(
 				"This Pi version cannot read transcript selections. Use /inline-comments:open <quoted text>.",

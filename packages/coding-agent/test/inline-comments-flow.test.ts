@@ -31,6 +31,7 @@ function harness(
 ) {
 	const handlers = new Map<string, (e: never, ctx: ExtensionContext) => unknown>();
 	const commands = new Map<string, { handler: (a: string, c: ExtensionCommandContext) => Promise<void> }>();
+	const shortcutHandlers: Array<(ctx: ExtensionContext) => unknown> = [];
 	let select: ((s: TranscriptSelection) => void) | undefined;
 	const notify = vi.fn();
 	const custom = vi.fn();
@@ -64,7 +65,9 @@ function harness(
 		on: (n: string, h: (e: never, ctx: ExtensionContext) => unknown) => handlers.set(n, h),
 		registerCommand: (n: string, c: { handler: (a: string, c: ExtensionCommandContext) => Promise<void> }) =>
 			commands.set(n, c),
-		registerShortcut: vi.fn(),
+		registerShortcut: (_key: string, config: { handler: (ctx: ExtensionContext) => unknown }) => {
+			shortcutHandlers.push(config.handler);
+		},
 		appendEntry: vi.fn(),
 		sendUserMessage: vi.fn(),
 	} as unknown as ExtensionAPI);
@@ -73,6 +76,11 @@ function harness(
 		const registered = commands.get(n);
 		if (!registered) throw new Error(`Missing command: ${n}`);
 		await registered.handler(a, ctx);
+	};
+	const shortcut = async (index = 0) => {
+		const handler = shortcutHandlers[index];
+		if (!handler) throw new Error(`Missing shortcut: ${index}`);
+		await handler(ctx);
 	};
 	emit("session_start");
 	const selectText = (text: string, sourceId = "assistant-1") => {
@@ -83,7 +91,7 @@ function harness(
 			sourceId,
 		});
 	};
-	return { emit, command, selectText, custom, notify, ctx };
+	return { emit, command, shortcut, selectText, custom, notify, ctx };
 }
 
 describe("long-response continuous commenting", () => {
@@ -122,6 +130,23 @@ describe("long-response continuous commenting", () => {
 		const h = harness({ customResults: [undefined, "saved"], activeSelection: () => undefined });
 		await h.command("inline-comments");
 		h.selectText("The middle part has more words"); // onSelection fired earlier
+		await h.command("inline-comments:open");
+		expect(h.custom).toHaveBeenCalledTimes(1);
+	});
+
+	it("Alt+E enables inline comments and opens the selected text", async () => {
+		const h = harness({ customResults: ["comment"] });
+		h.selectText("The tail ends here");
+		await h.shortcut();
+		expect(h.custom).toHaveBeenCalledTimes(1);
+		expect(h.notify).toHaveBeenCalledWith("Inline commenting enabled.", "info");
+	});
+
+	it("inline-comments:enable is an explicit idempotent enable command", async () => {
+		const h = harness({ customResults: ["comment"] });
+		await h.command("inline-comments:enable");
+		await h.command("inline-comments:enable");
+		h.selectText("The tail ends here");
 		await h.command("inline-comments:open");
 		expect(h.custom).toHaveBeenCalledTimes(1);
 	});

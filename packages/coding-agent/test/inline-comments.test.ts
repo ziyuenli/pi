@@ -79,6 +79,32 @@ describe("inline comments", () => {
 		expect(findAssistantEntryId(ctx, "Source text", "missing-entry")).toBeUndefined();
 	});
 
+	it("matches ordinary text mixed with rendered inline-code text", () => {
+		const ctx = contextWithAssistants([
+			{
+				id: "selected-entry",
+				text: [
+					"已完成并推送：",
+					"",
+					"- TUI 按渲染组件边界识别 assistant response，提供 `sourceId`。",
+					"- `npm run check`：通过",
+					"- Pi：`a3a915f7e`",
+					"- Extensions：`3ea5132`",
+				].join("\n"),
+			},
+		]);
+
+		const renderedSelection = [
+			"已完成并推送：",
+			"- TUI 按渲染组件边界识别 assistant response，提供 sourceId。",
+			"- npm run check：通过",
+			"- Pi：a3a915f7e",
+			"- Extensions：3ea5132",
+		].join("\n");
+
+		expect(findAssistantEntryId(ctx, renderedSelection)).toBe("selected-entry");
+	});
+
 	it("restores only the latest valid state entry from the active session branch", () => {
 		const ctx = {
 			sessionManager: {
