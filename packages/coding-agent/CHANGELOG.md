@@ -152,6 +152,7 @@
 ### Removed
 
 - Removed unavailable inherited GPT-5.4 and GPT-5.4 mini models from OpenAI Codex selection ([#9394](https://github.com/earendil-works/pi/issues/9394)).
+
 ## [0.85.1] - 2026-09-05
 
 ### New Features
