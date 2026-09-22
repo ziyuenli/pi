@@ -1,6 +1,6 @@
 ---
 name: update-pi
-description: Update this Pi fork to the latest official upstream release tag while preserving the transcript-selection feature patch, then rebuild and push. Use when the user says "update pi", "sync pi", or asks to pull official upstream changes into the local source checkout.
+description: Update the local Pi source fork (~/pi) to the newest official upstream release tag while replaying the transcript-selection feature patch. Use for any Pi upgrade request, including "update pi", "sync pi", "pi 升级", "升级 pi", or asking to pull official upstream changes into the local source checkout. This is the Pi upgrade route; it does not mean the npm-global `pi update` self-update.
 ---
 
 # Update Pi
@@ -22,13 +22,13 @@ takes the clean official baseline and re-applies the feature patch on top.
 
 ## Invocation
 
-Run from the Pi source checkout:
+The script resolves its own repository path, so it runs from any working
+directory:
 
 ```bash
-cd ~/pi
-./update-pi.sh            # update to newest official release tag
-./update-pi.sh --check    # report whether an update is available (no changes)
-PI_TARGET=v0.86.0 ./update-pi.sh   # pin an explicit target release tag
+~/pi/update-pi.sh            # update to newest official release tag
+~/pi/update-pi.sh --check    # report whether an update is available (no changes)
+PI_TARGET=v0.86.0 ~/pi/update-pi.sh   # pin an explicit target release tag
 ```
 
 Or, from inside a Pi session, ask the agent to run it:
@@ -52,8 +52,14 @@ and surface the result.
 The feature patch is small and centered on a handful of files. Normally it
 applies cleanly onto a newer release. If it conflicts, the script uses a 3-way
 merge and **stops** so a human or agent can resolve the remaining conflicts
-(`git mergetool`, or edit the files), then `git add -A && git commit`. It never
-silently drops the feature.
+(`git mergetool`, or edit the files), then `git add -A && git commit`. Running
+the script again then **resumes**: it reuses the existing `fork/<tag>` branch
+instead of re-checking it out (which would discard the resolution commit) and
+completes the dependency install, model catalog refresh, and changelog marker.
+
+Before replaying, the script regenerates `transcript-selection.patch` whenever
+it no longer equals the live `<baseline>..HEAD` diff, so feature commits made
+after the previous update are never dropped onto the next baseline.
 
 ## After the update
 
