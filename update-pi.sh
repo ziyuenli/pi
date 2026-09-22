@@ -92,17 +92,38 @@ git -C "$REPO" fetch --tags "$UP_REMOTE"
 TARGET="${PI_TARGET:-$(latest_upstream_tag)}"
 [[ -n "$TARGET" ]] || die "Could not determine the latest upstream release tag."
 CURRENT="$(current_tag)"
+BASE_BRANCH="fork/${TARGET}"
+# Branch that carries the transcript-selection feature commits. A resumed run is
+# already on $BASE_BRANCH, so it cannot read the name off the current branch and
+# falls back to this one for the final merge guidance.
+FEATURE_BRANCH_DEFAULT="feat/transcript-selection-hooks"
 
 log "Current fork baseline: $CURRENT"
 log "Target upstream tag:   $TARGET"
 
-if [[ "$TARGET" == "$CURRENT" ]]; then
+report_up_to_date() {
 	if [[ "${1:-}" == "--check" ]]; then
 		echo "up to date ($CURRENT)"
 	else
 		log "Already at $CURRENT — nothing to do."
 	fi
 	exit 0
+}
+
+# The state file records a *finished* update. So an unwritten/stale entry plus an
+# existing $BASE_BRANCH means an earlier run stopped at a patch conflict and the
+# resolution is already committed on that branch: resume at step 5 instead of
+# re-checking out the baseline, which would discard the resolution commit.
+RESUME=false
+if [[ "$TARGET" == "$CURRENT" ]]; then
+	if [[ "$(cat "$STATE_FILE" 2>/dev/null || true)" == "$TARGET" ]]; then
+		report_up_to_date "$@"
+	fi
+	if ! git -C "$REPO" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+		report_up_to_date "$@"
+	fi
+	RESUME=true
+	log "Resuming $TARGET — $BASE_BRANCH already carries the applied patch."
 fi
 
 if [[ "${1:-}" == "--check" ]]; then
@@ -111,56 +132,68 @@ if [[ "${1:-}" == "--check" ]]; then
 fi
 
 ########################################
-# 3. Ensure feature patch exists.
+# 3. Ensure the feature patch matches the feature commits.
 ########################################
+# Regenerate whenever the stored patch no longer equals the live $CURRENT..HEAD
+# diff. Commits made after the last update would otherwise be silently dropped
+# when the stale patch is re-applied onto the next baseline.
 if [[ ! -s "$PATCH_FILE" ]]; then
 	log "Generating transcript-selection.patch from $CURRENT..HEAD ..."
 	git -C "$REPO" diff "$CURRENT" HEAD > "$PATCH_FILE" \
 		|| die "Could not generate feature patch."
+elif ! cmp -s "$PATCH_FILE" <(git -C "$REPO" diff "$CURRENT" HEAD); then
+	log "transcript-selection.patch is stale — regenerating from $CURRENT..HEAD ..."
+	git -C "$REPO" diff "$CURRENT" HEAD > "$PATCH_FILE" \
+		|| die "Could not regenerate feature patch."
 fi
 
 ########################################
 # 4. Reset to the clean official baseline and re-apply the feature patch.
 ########################################
-log "Checking out latest official baseline: $TARGET ..."
+FEATURE_BRANCH="$FEATURE_BRANCH_DEFAULT"
+if [[ "$RESUME" == true ]]; then
+	log "Skipping baseline checkout — $BASE_BRANCH already carries the applied patch."
+else
+	log "Checking out latest official baseline: $TARGET ..."
 
-# Stash any uncommitted work before we move the working tree.
-if [[ -n "$(git -C "$REPO" status --porcelain)" ]]; then
-	log "Stashing uncommitted changes..."
-	git -C "$REPO" stash push -u -m "update-pi: pre-${TARGET}" || true
-fi
+	# Stash any uncommitted work before we move the working tree.
+	if [[ -n "$(git -C "$REPO" status --porcelain)" ]]; then
+		log "Stashing uncommitted changes..."
+		git -C "$REPO" stash push -u -m "update-pi: pre-${TARGET}" || true
+	fi
 
-# Resolve FEATURE branch name (the branch that carries the feature commits).
-FEATURE_BRANCH="$(git -C "$REPO" branch --show-current)"
-[[ -n "$FEATURE_BRANCH" ]] || FEATURE_BRANCH="transcript-selection-hooks"
+	# Resolve FEATURE branch name (the branch that carries the feature commits).
+	FEATURE_BRANCH="$(git -C "$REPO" branch --show-current)"
+	[[ -n "$FEATURE_BRANCH" ]] || FEATURE_BRANCH="$FEATURE_BRANCH_DEFAULT"
 
-# Create a fresh branch from the official baseline.
-BASE_BRANCH="fork/${TARGET}"
-if git -C "$REPO" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
-	git -C "$REPO" branch -D "$BASE_BRANCH" >/dev/null 2>&1 || true
-fi
-git -C "$REPO" checkout -b "$BASE_BRANCH" "$TARGET" \
-	|| die "Could not create $BASE_BRANCH from $TARGET."
+	# Create a fresh branch from the official baseline.
+	if git -C "$REPO" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+		git -C "$REPO" branch -D "$BASE_BRANCH" >/dev/null 2>&1 || true
+	fi
+	git -C "$REPO" checkout -b "$BASE_BRANCH" "$TARGET" \
+		|| die "Could not create $BASE_BRANCH from $TARGET."
 
-log "Applying transcript-selection.patch onto $TARGET ..."
-if ! git -C "$REPO" apply --check "$PATCH_FILE" 2>/dev/null; then
-	log "Patch does not apply cleanly — trying 3-way merge..."
-	if ! git -C "$REPO" apply --3way "$PATCH_FILE"; then
-		cat <<'EOF'
+	log "Applying transcript-selection.patch onto $TARGET ..."
+	if ! git -C "$REPO" apply --check "$PATCH_FILE" 2>/dev/null; then
+		log "Patch does not apply cleanly — trying 3-way merge..."
+		if ! git -C "$REPO" apply --3way "$PATCH_FILE"; then
+			cat <<EOF
 
   ⚠  The feature patch conflicts with upstream $TARGET.
   Resolve the remaining conflicts (git mergetool / edit the files), then:
       git add -A
       git commit -m "apply transcript-selection patch on $TARGET"
-  After committing, run ./update-pi.sh again to complete build + push.
+  Then run ./update-pi.sh again: it reuses this branch and completes the
+  dependency install, model catalog refresh, and changelog marker.
 EOF
-		die "Patch conflicts — manual resolution required."
+			die "Patch conflicts — manual resolution required."
+		fi
+	else
+		git -C "$REPO" apply "$PATCH_FILE"
 	fi
-else
-	git -C "$REPO" apply "$PATCH_FILE"
-fi
 
-log "Feature patch applied."
+	log "Feature patch applied."
+fi
 
 ########################################
 # 5. Install deps, align model data, version, commit.
