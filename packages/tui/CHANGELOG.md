@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added clickable fullscreen transcript annotations as post-layout upper-right overlays with safe-cell collision handling and optional range highlighting.
+
 ## [0.87.0] - 2026-09-21
 
 ## [0.86.1] - 2026-09-20
@@ -21,7 +27,6 @@
 - Fixed fullscreen Kitty images being erased by later row clears in WezTerm ([#9169](https://github.com/earendil-works/pi/issues/9169)).
 - Fixed skill slash-command autocomplete ranking the `skill:` prefix instead of the bare skill name ([#9120](https://github.com/earendil-works/pi/pull/9120) by [@yearth](https://github.com/yearth)).
 - Fixed file autocomplete boundaries and path quoting around CJK punctuation ([#9746](https://github.com/earendil-works/pi/pull/9746) by [@haoqixu](https://github.com/haoqixu)).
-
 ## [0.85.1] - 2026-09-05
 
 ### Added
@@ -53,6 +58,10 @@
 - Fixed drag selection continuing over an editor.
 - Fixed terminal startup under restricted seccomp policies that reject the `SIGWINCH` self-signal ([#8898](https://github.com/earendil-works/pi/pull/8898) by [@bartlomiejkida](https://github.com/bartlomiejkida)).
 - Fixed Zed terminal image capability detection ([#8828](https://github.com/earendil-works/pi/pull/8828) by [@Perlence](https://github.com/Perlence)).
+
+### Added
+
+- Added completed-selection callbacks with document and viewport coordinates to `TuiAltScreen`.
 
 ## [0.84.4] - 2026-08-28
 
@@ -543,7 +552,6 @@
 - Fixed slash-command Tab completion from immediately chaining into argument autocomplete after completing the command name, restoring flows like `/model` that submit into a selector dialog ([#2577](https://github.com/badlogic/pi-mono/issues/2577))
 - Fixed stale content and incorrect viewport tracking after TUI content shrinks or transient components inflate the working area ([#2126](https://github.com/badlogic/pi-mono/pull/2126) by [@Perlence](https://github.com/Perlence))
 - Fixed `@` autocomplete to debounce editor-triggered searches, cancel in-flight `fd` lookups cleanly, and keep suggestions visible while results refresh ([#1278](https://github.com/badlogic/pi-mono/issues/1278))
-
 
 ## [0.62.0] - 2026-03-23
 
