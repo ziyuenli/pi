@@ -7,6 +7,7 @@ import {
 } from "../src/alt-screen-search.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
+import { Markdown } from "../src/components/markdown.ts";
 import { MouseRegion } from "../src/components/mouse-region.ts";
 import { ScrollView } from "../src/components/scroll-view.ts";
 import { SelectList } from "../src/components/select-list.ts";
@@ -20,7 +21,7 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
-import type { TuiMouseEvent } from "../src/tui.ts";
+import { Container, type TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -1280,6 +1281,262 @@ describe("TuiAltScreen", () => {
 			"selection inverse must be reapplied after a reset inside the selection",
 		);
 		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("reports completed selections with document and viewport coordinates", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const selections: Array<{
+			text: string;
+			document: { start: { row: number; column: number }; end: { row: number; column: number } };
+			viewport: { start: { row: number; column: number }; end: { row: number; column: number } };
+		}> = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push(selection),
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [
+			{
+				text: "alpha\nbeta",
+				document: { start: { row: 0, column: 0 }, end: { row: 1, column: 4 } },
+				viewport: { start: { row: 0, column: 0 }, end: { row: 1, column: 4 } },
+			},
+		]);
+
+		tui.stop();
+	});
+
+	it("identifies the unique rendered source for historical selections after scrolling", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text(Array.from({ length: 8 }, (_, index) => `assistant line ${index + 1}`).join("\n"), 0, 0);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(source, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+		tui.scrollToBottom();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;20;2M");
+		terminal.sendInput("\x1b[<0;20;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "assistant line 5\nassistant line 6", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("preserves source ownership when a selection crosses ANSI-styled text", async () => {
+		const terminal = new RecordingTerminal(40, 2);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text("ordinary \x1b[96mblue\x1b[39m tail", 0, 0);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(source, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;20;1M");
+		terminal.sendInput("\x1b[<0;20;1m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "ordinary blue tail", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("preserves source ownership for a component nested inside a Container below the ScrollView", async () => {
+		// Mirrors the real fullscreen chat: ScrollView wraps the document Container,
+		// and transcript selection sources are assistant components nested inside it.
+		const terminal = new RecordingTerminal(40, 2);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text("assistant body line", 0, 0);
+		const document = new Container();
+		document.addChild(new Text("header", 0, 0));
+		document.addChild(source);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(document, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;2M");
+		terminal.sendInput("\x1b[<32;20;2M");
+		terminal.sendInput("\x1b[<0;20;2m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "assistant body line", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("preserves source ownership across rendered Markdown, inline code, and LaTeX", async () => {
+		const terminal = new RecordingTerminal(50, 2);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const markdownTheme = {
+			heading: (text: string) => text,
+			link: (text: string) => text,
+			linkUrl: (text: string) => text,
+			code: (text: string) => text,
+			codeBlock: (text: string) => text,
+			codeBlockBorder: (text: string) => text,
+			quote: (text: string) => text,
+			quoteBorder: (text: string) => text,
+			hr: (text: string) => text,
+			listBullet: (text: string) => text,
+			bold: (text: string) => text,
+			italic: (text: string) => text,
+			strikethrough: (text: string) => text,
+			underline: (text: string) => text,
+		};
+		const source = new Markdown("ordinary `inline` with $x^2$ and **Markdown**.", 0, 0, markdownTheme);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source }],
+		});
+		tui.setLayoutRoot(new ScrollView(source, { follow: "end", primary: true }));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;50;1M");
+		terminal.sendInput("\x1b[<0;50;1m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [
+			{ text: "ordinary inline with x² and Markdown.", sourceId: "assistant-entry" },
+		]);
+		tui.stop();
+	});
+
+	it("keeps a source selection inside the assistant component when a drag enters a notification row", async () => {
+		const terminal = new RecordingTerminal(40, 4);
+		const selections: Array<{ text: string; sourceId?: string }> = [];
+		const source = new Text("assistant line 1\nassistant line 2", 0, 0);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			onSelection: (selection) => selections.push({ text: selection.text, sourceId: selection.sourceId }),
+			getTranscriptSelectionSources: () => [{ id: "assistant-entry", component: source, selectionBoundary: true }],
+		});
+		tui.setLayoutRoot(
+			new ScrollView(new VStack([source, new Text("Warning: transient notification", 0, 0)]), {
+				follow: "end",
+				primary: true,
+			}),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;2M");
+		terminal.sendInput("\x1b[<32;40;3M");
+		terminal.sendInput("\x1b[<0;40;3m");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(selections, [{ text: "assistant line 2", sourceId: "assistant-entry" }]);
+		tui.stop();
+	});
+
+	it("renders clickable transcript annotations and highlights open ranges", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		let opened = 0;
+		let openedViewport: { start: { row: number; column: number }; end: { row: number; column: number } } | undefined;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.setTranscriptAnnotations([
+			{
+				id: "comment-1",
+				marker: "🫧1",
+				selection: {
+					text: "beta\ngamma",
+					document: { start: { row: 1, column: 0 }, end: { row: 2, column: 5 } },
+					viewport: { start: { row: 1, column: 0 }, end: { row: 2, column: 5 } },
+				},
+				open: true,
+				onOpen: (selection) => {
+					opened++;
+					openedViewport = selection.viewport;
+				},
+			},
+		]);
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.match(viewport[1] ?? "", /beta .*🫧1/);
+		assert.ok(!stripTerminalSequences(viewport[2] ?? "").includes("🫧1"));
+		assert.ok(stripTerminalSequences(viewport[2] ?? "").includes("gamma"));
+		assert.ok(terminal.events.some((event) => event.type === "write" && event.data.includes("\x1b[7m")));
+
+		terminal.sendInput("\x1b[<0;7;2M");
+		terminal.sendInput("\x1b[<0;7;2m");
+		await terminal.waitForRender();
+		assert.strictEqual(opened, 1);
+		assert.deepStrictEqual(openedViewport, {
+			start: { row: 1, column: 0 },
+			end: { row: 2, column: 5 },
+		});
+
+		tui.stop();
+	});
+
+	it("repositions annotation markers and refreshes callback viewport coordinates after scrolling", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		let openedViewport: { start: { row: number; column: number }; end: { row: number; column: number } } | undefined;
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		tui.addChild(new Text(Array.from({ length: 8 }, (_, index) => `line ${index}`).join("\n"), 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.setTranscriptAnnotations([
+			{
+				id: "comment-1",
+				marker: "🫧1",
+				selection: {
+					text: "line 5",
+					document: { start: { row: 5, column: 0 }, end: { row: 5, column: 6 } },
+					viewport: { start: { row: 1, column: 0 }, end: { row: 1, column: 6 } },
+				},
+				onOpen: (selection) => {
+					openedViewport = selection.viewport;
+				},
+			},
+		]);
+		await terminal.waitForRender();
+		assert.match(terminal.getViewport()[1] ?? "", /line 5 .*🫧1/);
+
+		tui.scrollBy(-2);
+		await terminal.waitForRender();
+		assert.match(terminal.getViewport()[3] ?? "", /line 5 .*🫧1/);
+
+		terminal.sendInput("\x1b[<0;8;4M");
+		terminal.sendInput("\x1b[<0;8;4m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(openedViewport, {
+			start: { row: 3, column: 0 },
+			end: { row: 3, column: 6 },
+		});
 
 		tui.stop();
 	});

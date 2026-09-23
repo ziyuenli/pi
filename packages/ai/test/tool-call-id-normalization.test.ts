@@ -205,7 +205,7 @@ describe("Tool Call ID Normalization - Prefilled Context", () => {
 			],
 			api: "openai-responses",
 			provider: "github-copilot",
-			model: "gpt-5.2-codex",
+			model: "gpt-5.5",
 			usage: {
 				input: 100,
 				output: 50,

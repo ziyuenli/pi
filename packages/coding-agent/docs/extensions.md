@@ -193,6 +193,26 @@ Guard terminal-only behavior with `ctx.mode === "tui"` and use `ctx.hasUI` for i
 
 Keep tool and event behavior independent from rendering so non-interactive modes remain functional.
 
+#### Transcript selection
+
+Fullscreen mode reports completed selections of application-owned transcript text through `ctx.ui.onTranscriptSelection()`, which returns an unsubscribe function:
+
+```typescript
+const unsubscribe = ctx.ui.onTranscriptSelection((selection) => {
+  console.log(selection.text);
+  console.log(selection.sourceId); // Assistant entry ID when the whole range stays inside one response
+});
+
+// Call during session shutdown or when the listener is no longer needed.
+unsubscribe();
+```
+
+Positions are zero-based with an exclusive `end`. `selection.document` holds unscrolled transcript coordinates, and `selection.viewport` holds current terminal coordinates for anchoring an overlay near the selected text. `selection.sourceId` is set only when the whole range lies inside one rendered assistant response, so extensions can attach comments without matching Markdown-rendered text. RPC, JSON, print, and regular TUI modes never emit selections.
+
+`ctx.ui.setTranscriptAnnotations(key, annotations)` composites clickable markers beside selected ranges without changing transcript wrapping. Markers are painted after layout at the selection's upper-right blank cell and are omitted when no blank cell is available; an open annotation receives Pi's selection highlight and its `onOpen` callback receives the selection with current viewport coordinates. The list is keyed per extension, so replace your own list instead of mutating another extension's markers. Pass `undefined` to remove them.
+
+See [`inline-comments.ts`](../examples/extensions/inline-comments.ts) for a complete staged-comment workflow.
+
 <a id="error-handling"></a>
 <a id="handle-errors-and-shutdown"></a>
 

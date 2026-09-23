@@ -1,4 +1,4 @@
-import type { Terminal } from "@earendil-works/pi-tui";
+import type { Terminal, TuiTextSelection, TuiTextSelectionSource } from "@earendil-works/pi-tui";
 import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
@@ -12,6 +12,8 @@ export interface InteractiveTuiOptions {
 	readonly terminal?: Terminal;
 	readonly onRightClickPaste?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
+	readonly onTranscriptSelection?: (selection: TuiTextSelection) => void;
+	readonly getTranscriptSelectionSources?: () => readonly TuiTextSelectionSource[];
 }
 
 /** Composition root shared by coding-agent presentations. */
@@ -34,6 +36,12 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,
+			onSelection: options.onTranscriptSelection,
+			getTranscriptSelectionSources: options.getTranscriptSelectionSources,
+			transcriptAnnotationStyle: (marker, open) =>
+				open
+					? theme.bold(theme.inverse(theme.fg("accent", marker)))
+					: theme.bold(theme.bg("selectedBg", theme.fg("accent", marker))),
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);
@@ -52,26 +60,30 @@ export function createInteractiveTuiReference(getTui: () => TUI): TUI {
 	return new Proxy({} as TUI, {
 		get: (_target, property) => {
 			const tui = getTui();
-			const value = Reflect.get(tui, property, tui);
+			// SAFETY: The proxy intentionally forwards arbitrary runtime TUI properties.
+			const value = (tui as unknown as Record<PropertyKey, unknown>)[property];
 			if (typeof value !== "function") return value;
 			let methodTui = tui;
 			let method = value;
 			return (...args: unknown[]) => {
 				const currentTui = getTui();
 				if (currentTui !== methodTui) {
-					const currentMethod = Reflect.get(currentTui, property, currentTui);
+					// SAFETY: The proxy intentionally forwards arbitrary runtime TUI properties.
+					const currentMethod = (currentTui as unknown as Record<PropertyKey, unknown>)[property];
 					if (typeof currentMethod !== "function") {
 						throw new TypeError(`TUI property ${String(property)} is not callable`);
 					}
 					methodTui = currentTui;
 					method = currentMethod;
 				}
-				return Reflect.apply(method, methodTui, args);
+				return method.apply(methodTui, args);
 			};
 		},
 		set: (_target, property, value) => {
-			const tui = getTui();
-			return Reflect.set(tui, property, value, tui);
+			// SAFETY: The proxy intentionally forwards arbitrary runtime TUI properties.
+			const tui = getTui() as unknown as Record<PropertyKey, unknown>;
+			tui[property] = value;
+			return true;
 		},
 		has: (_target, property) => Reflect.has(getTui(), property),
 		getPrototypeOf: () => Reflect.getPrototypeOf(getTui()),

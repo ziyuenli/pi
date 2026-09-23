@@ -1051,6 +1051,7 @@ export class AgentSession {
 			return;
 		}
 
+		// SAFETY: AgentMessage variants are runtime objects; this mutation preserves the existing object identity.
 		const targetRecord = target as unknown as Record<string, unknown>;
 		for (const key of Object.keys(targetRecord)) {
 			delete targetRecord[key];
@@ -1642,6 +1643,14 @@ export class AgentSession {
 				return;
 			}
 			const { text: currentText, images: currentImages } = processedInput;
+
+			// Give input extensions a chance to turn an empty submit into a meaningful
+			// message (for example, sending staged inline comments). Otherwise keep
+			// native empty-submit behavior as a no-op.
+			if (!currentText.trim() && !currentImages?.length) {
+				preflightResult?.(true);
+				return;
+			}
 
 			// Expand skill commands (/skill:name args) and prompt templates (/template args)
 			let expandedText = currentText;
