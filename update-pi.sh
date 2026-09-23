@@ -111,20 +111,27 @@ report_up_to_date() {
 	exit 0
 }
 
-# The state file records a *finished* update. So an unwritten/stale entry plus an
-# existing $BASE_BRANCH means an earlier run stopped at a patch conflict and the
-# resolution is already committed on that branch: resume at step 5 instead of
-# re-checking out the baseline, which would discard the resolution commit.
+# The state file records a *finished* update. So an existing $BASE_BRANCH plus a
+# stale state entry means an earlier run already built the baseline and applied
+# the feature patch: resume at step 5 instead of re-checking out the baseline,
+# which would discard the resolution work sitting in the working tree.
 RESUME=false
-if [[ "$TARGET" == "$CURRENT" ]]; then
-	if [[ "$(cat "$STATE_FILE" 2>/dev/null || true)" == "$TARGET" ]]; then
-		report_up_to_date "$@"
-	fi
-	if ! git -C "$REPO" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
-		report_up_to_date "$@"
-	fi
+if [[ "$TARGET" == "$CURRENT" ]] && [[ "$(cat "$STATE_FILE" 2>/dev/null || true)" == "$TARGET" ]]; then
+	report_up_to_date "$@"
+fi
+# Branch existence — not "$TARGET == $CURRENT" — decides resumption: on the
+# normal conflict path $TARGET is already newer than the recorded $CURRENT.
+if git -C "$REPO" rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
 	RESUME=true
 	log "Resuming $TARGET — $BASE_BRANCH already carries the applied patch."
+elif [[ "$TARGET" == "$CURRENT" ]]; then
+	report_up_to_date "$@"
+fi
+
+# Step 5 commits whatever is in the working tree, so refuse to resume from
+# another branch instead of committing the resolution in the wrong place.
+if [[ "$RESUME" == true && "$(git -C "$REPO" branch --show-current)" != "$BASE_BRANCH" ]]; then
+	die "Resume needs $BASE_BRANCH checked out: git -C '$REPO' switch $BASE_BRANCH"
 fi
 
 if [[ "${1:-}" == "--check" ]]; then
@@ -138,7 +145,13 @@ fi
 # Regenerate whenever the stored patch no longer equals the live $CURRENT..HEAD
 # diff. Commits made after the last update would otherwise be silently dropped
 # when the stale patch is re-applied onto the next baseline.
-if [[ ! -s "$PATCH_FILE" ]]; then
+# Skip while resuming: HEAD already sits on $TARGET, so $CURRENT..HEAD spans the
+# whole official release diff plus the feature, and the patch applied here is not
+# committed yet. Either way the regenerated patch would be wrong (upstream diff,
+# or empty). Next run's $CURRENT is $TARGET, so the check resumes working then.
+if [[ "$RESUME" == true ]]; then
+	log "Keeping existing transcript-selection.patch ($CURRENT baseline)."
+elif [[ ! -s "$PATCH_FILE" ]]; then
 	log "Generating transcript-selection.patch from $CURRENT..HEAD ..."
 	git -C "$REPO" diff "$CURRENT" HEAD >"$PATCH_FILE" ||
 		die "Could not generate feature patch."
