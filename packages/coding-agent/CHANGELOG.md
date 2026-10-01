@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added `ctx.ui.onTranscriptSelection()` and `ctx.ui.setTranscriptAnnotations()` for extensions that annotate fullscreen transcript selections. Markers are post-layout overlays with current viewport coordinates on activation.
+
 ## [0.99.2] - 2026-09-30
 
 ### New Features
