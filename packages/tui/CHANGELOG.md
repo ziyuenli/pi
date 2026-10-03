@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added clickable fullscreen transcript annotations as post-layout upper-right overlays with safe-cell collision handling and optional range highlighting.
+
 ## [1.0.0] - 2026-10-01
 
 ### Added
