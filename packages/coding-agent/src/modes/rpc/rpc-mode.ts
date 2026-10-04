@@ -165,6 +165,19 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			return () => {};
 		},
 
+		getTranscriptSelection(): undefined {
+			return undefined;
+		},
+
+		onTranscriptSelection(): () => void {
+			// Transcript selection belongs to the interactive fullscreen renderer.
+			return () => {};
+		},
+
+		setTranscriptAnnotations(): void {
+			// Transcript annotations belong to the interactive fullscreen renderer.
+		},
+
 		setStatus(key: string, text: string | undefined): void {
 			// Fire and forget - no response needed
 			output({

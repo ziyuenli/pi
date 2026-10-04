@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added `ctx.ui.onTranscriptSelection()` and `ctx.ui.setTranscriptAnnotations()` for extensions that annotate fullscreen transcript selections. Markers are post-layout overlays with current viewport coordinates on activation.
+
 ## [1.0.2] - 2026-10-04
 
 ### New Features
@@ -53,7 +59,6 @@
 ### Removed
 
 - Removed `npm-shrinkwrap.json` from the published package. npm installations no longer pin transitive dependencies, and library consumers can now override them. Use the pi.dev installer for pinned installations ([#5653](https://github.com/earendil-works/pi/issues/5653))
-
 ## [1.0.0] - 2026-10-01
 
 ### New Features
