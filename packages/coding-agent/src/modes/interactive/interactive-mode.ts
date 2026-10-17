@@ -28,6 +28,9 @@ import type {
 	OverlayOptions,
 	SlashCommand,
 	TuiMainScreenRenderState,
+	TuiTextSelection,
+	TuiTextSelectionSource,
+	TuiTranscriptAnnotation,
 } from "@earendil-works/pi-tui";
 import * as TuiLayouts from "@earendil-works/pi-tui";
 import {
@@ -89,6 +92,7 @@ import type {
 	ExtensionWidgetOptions,
 	MarkdownTransformer,
 	ProjectTrustContext,
+	TranscriptSelectionHandler,
 	UserBashEventResult,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
@@ -565,6 +569,10 @@ export class InteractiveMode {
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
 	}>();
+	private transcriptSelectionHandlers = new Set<TranscriptSelectionHandler>();
+	private transcriptSelectionSources = new Map<Component, AgentMessage>();
+	private transcriptEntryIds = new WeakMap<object, string>();
+	private extensionTranscriptAnnotations = new Map<string, readonly TuiTranscriptAnnotation[]>();
 
 	// Extension widgets (components rendered above/below the editor)
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
@@ -627,6 +635,8 @@ export class InteractiveMode {
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+			onTranscriptSelection: (selection) => this.emitTranscriptSelection(selection),
+			getTranscriptSelectionSources: () => this.getTranscriptSelectionSources(),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -915,6 +925,8 @@ export class InteractiveMode {
 			onRightClickPaste: this.onRightClickPaste,
 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+			onTranscriptSelection: (selection) => this.emitTranscriptSelection(selection),
+			getTranscriptSelectionSources: () => this.getTranscriptSelectionSources(),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -924,6 +936,7 @@ export class InteractiveMode {
 		this.renderer = nextUi;
 		this.options.tuiMode = mode;
 		this.mountInteractiveTui(nextUi, components);
+		this.syncTranscriptAnnotations();
 		nextUi.invalidate();
 		nextUi.setFocus(focus);
 		if (!startRenderer) return true;
@@ -2461,6 +2474,9 @@ export class InteractiveMode {
 		}
 		this.ui.hideOverlay();
 		this.clearExtensionTerminalInputListeners();
+		this.transcriptSelectionHandlers.clear();
+		this.extensionTranscriptAnnotations.clear();
+		this.syncTranscriptAnnotations();
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
@@ -2612,6 +2628,47 @@ export class InteractiveMode {
 		this.extensionTerminalInputSubscriptions.clear();
 	}
 
+	private emitTranscriptSelection(selection: TuiTextSelection): void {
+		for (const handler of this.transcriptSelectionHandlers) {
+			try {
+				handler(selection);
+			} catch {
+				// Selection listeners must not interrupt terminal input handling.
+			}
+		}
+	}
+
+	private getTranscriptSelectionSources(): readonly TuiTextSelectionSource[] {
+		const sources: TuiTextSelectionSource[] = [];
+		for (const [component, message] of this.transcriptSelectionSources) {
+			const id = this.getTranscriptEntryId(message);
+			if (id) sources.push({ component, id, selectionBoundary: true });
+		}
+		return sources;
+	}
+
+	private addTranscriptSelectionListener(handler: TranscriptSelectionHandler): () => void {
+		this.transcriptSelectionHandlers.add(handler);
+		return () => this.transcriptSelectionHandlers.delete(handler);
+	}
+
+	private setExtensionTranscriptAnnotations(
+		key: string,
+		annotations: readonly TuiTranscriptAnnotation[] | undefined,
+	): void {
+		if (annotations && annotations.length > 0) this.extensionTranscriptAnnotations.set(key, annotations);
+		else this.extensionTranscriptAnnotations.delete(key);
+		this.syncTranscriptAnnotations();
+	}
+
+	private syncTranscriptAnnotations(): void {
+		if (!(this.renderer instanceof TuiAltScreen)) return;
+		const annotations = [...this.extensionTranscriptAnnotations.entries()].flatMap(([key, items]) =>
+			items.map((annotation) => ({ ...annotation, id: `${key}:${annotation.id}` })),
+		);
+		this.renderer.setTranscriptAnnotations(annotations);
+	}
+
 	/**
 	 * Create the ExtensionUIContext for extensions.
 	 */
@@ -2637,6 +2694,10 @@ export class InteractiveMode {
 			input: (title, placeholder, opts) => this.showExtensionInput(title, placeholder, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
+			getTranscriptSelection: () =>
+				this.renderer instanceof TuiAltScreen ? this.renderer.getActiveTextSelection() : undefined,
+			onTranscriptSelection: (handler) => this.addTranscriptSelectionListener(handler),
+			setTranscriptAnnotations: (key, annotations) => this.setExtensionTranscriptAnnotations(key, annotations),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
@@ -2908,8 +2969,8 @@ export class InteractiveMode {
 				newEditor.setAutocompleteProvider(this.autocompleteProvider);
 			}
 
-			// If extending CustomEditor, copy app-level handlers
-			// Use duck typing since instanceof fails across jiti module boundaries
+			// If extending CustomEditor, copy app-level handlers.
+			// SAFETY: Duck typing is required because instanceof fails across jiti module boundaries.
 			const customEditor = newEditor as unknown as Record<string, unknown>;
 			if ("actionHandlers" in customEditor && customEditor.actionHandlers instanceof Map) {
 				if (!customEditor.onEscape) {
@@ -3201,7 +3262,6 @@ export class InteractiveMode {
 	private setupEditorSubmitHandler(): void {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
-			if (!text) return;
 
 			// Handle commands
 			if (text === "/settings") {
@@ -3395,7 +3455,7 @@ export class InteractiveMode {
 			} else {
 				this.pendingUserInputs.push(text);
 			}
-			this.editor.addToHistory?.(text);
+			if (text) this.editor.addToHistory?.(text);
 		};
 	}
 
@@ -3518,6 +3578,7 @@ export class InteractiveMode {
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
+					this.registerTranscriptSelectionSource(this.streamingComponent, event.message);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
 					this.ui.requestRender();
 				}
@@ -3573,6 +3634,7 @@ export class InteractiveMode {
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.streamingComponent.updateContent(this.streamingMessage, false);
+					this.registerTranscriptSelectionSource(this.streamingComponent, this.streamingMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -3879,6 +3941,16 @@ export class InteractiveMode {
 		this.chatContainer.addChild(component);
 	}
 
+	private getTranscriptEntryId(message: AgentMessage): string | undefined {
+		const renderedEntryId = this.transcriptEntryIds.get(message);
+		if (renderedEntryId) return renderedEntryId;
+		return this.sessionManager.getBranch().find((entry) => entry.type === "message" && entry.message === message)?.id;
+	}
+
+	private registerTranscriptSelectionSource(component: Component, message: AgentMessage): void {
+		this.transcriptSelectionSources.set(component, message);
+	}
+
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
 		switch (message.role) {
 			case "bashExecution": {
@@ -3990,6 +4062,7 @@ export class InteractiveMode {
 					this.getMarkdownTransformers(),
 				);
 				this.chatContainer.addChild(assistantComponent);
+				this.registerTranscriptSelectionSource(assistantComponent, message);
 				break;
 			}
 			case "toolResult": {
@@ -4108,11 +4181,16 @@ export class InteractiveMode {
 	): void {
 		// Selection coordinates point into the transcript being replaced (#9311).
 		if (this.renderer instanceof TuiAltScreen) this.renderer.resetTextSelection();
+		this.transcriptSelectionSources?.clear();
+		this.transcriptEntryIds = new WeakMap();
 		const items = entries.flatMap((entry): RenderSessionItem[] => {
 			if (entry.type === "custom" || (entry.type === "usage" && entry.kind === "cache_warm")) {
 				return [entry];
 			}
 			const messages = sessionEntryToContextMessages(entry);
+			if (entry.type === "message") {
+				for (const message of messages) this.transcriptEntryIds.set(message, entry.id);
+			}
 			if ((entry.type === "compaction" || entry.type === "branch_summary") && entry.usage && messages.length > 0) {
 				return [...messages, { type: "compaction_cost", kind: entry.type, usage: entry.usage }];
 			}
@@ -4374,13 +4452,19 @@ export class InteractiveMode {
 		this.isShuttingDown = true;
 		try {
 			this.unregisterSignalHandlers();
-		} catch {}
+		} catch {
+			// Continue best-effort terminal recovery after a crash.
+		}
 		try {
 			killTrackedDetachedChildren();
-		} catch {}
+		} catch {
+			// Continue best-effort terminal recovery after a crash.
+		}
 		try {
 			this.ui.stop();
-		} catch {}
+		} catch {
+			// There is no safer recovery path if terminal shutdown itself fails.
+		}
 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
 		console.error(error);
 		const extensionHint = this.getCrashExtensionHint(error);
@@ -7113,6 +7197,9 @@ export class InteractiveMode {
 		this.clearStatusIndicator();
 		this.themeController.disableAutoSync();
 		this.clearExtensionTerminalInputListeners();
+		this.transcriptSelectionHandlers.clear();
+		this.extensionTranscriptAnnotations.clear();
+		this.syncTranscriptAnnotations();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {
